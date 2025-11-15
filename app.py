@@ -26,6 +26,7 @@ from calculators.strategy_calculator import StrategyCalculator
 from calculators.ranking_engine import RankingEngine
 from utils.logger import setup_logger
 from utils.file_handler import FileHandler
+from utils.data_aggregator import DataAggregator
 
 logger = setup_logger(__name__)
 
@@ -267,23 +268,63 @@ class SwingQuantWorkflow:
             "message": "请执行以上命令并回传数据"
         }
     
-    def _handle_data_branch(self, user_query: str, uploaded_files: list) -> Dict[str, Any]:
+    def _handle_data_branch(self, user_query: str, uploaded_files: list, session_state: dict = None) -> Dict[str, Any]:
         """处理数据分析分支：完整量化分析"""
         logger.info(f"执行数据分析，文件数: {len(uploaded_files)}")
-        
+
+        if session_state is None:
+            session_state = {
+                "first_parse_data": "",
+                "current_symbol": "",
+                "data_status": "initial",
+                "missing_count": 0
+            }
+            
         # === Step 1: 事件检测 (CODE1) ===
         event_result = self.event_detector.detect(user_query)
         logger.info(f"事件检测完成: {event_result.get('event_count', 0)} 个事件")
         
         # === Step 2: 数据校验 (Agent 3) ===
-        validation_result = self.data_validator.validate(user_query, uploaded_files)
+        merged_data = self.data_validator.validate(user_query, uploaded_files)
+        # ✨ 新增: Step 2.5 数据聚合
+        aggregation_result = self.data_aggregator.process(
+            agent3_output=merged_data,
+            first_parse_data=session_state.get("first_parse_data", ""),
+            current_symbol=session_state.get("current_symbol", ""),
+            data_status=session_state.get("data_status", "initial"),
+            missing_count=session_state.get("missing_count", 0)
+        )
+        # 更新会话状态
+        session_state.update({
+            "first_parse_data": aggregation_result["first_parse_data"],
+            "current_symbol": aggregation_result["current_symbol"],
+            "data_status": aggregation_result["data_status"],
+            "missing_count": aggregation_result["missing_count"]
+        })
+
+        # 检查是否需要补齐
+        if aggregation_result["data_status"] == "awaiting_data":
+            return {
+                "type": "missing_data",
+                "symbol": aggregation_result["current_symbol"],
+                "progress": aggregation_result["user_guide_progress"],
+                "summary": aggregation_result["user_guide_summary"],
+                "commands": aggregation_result["user_guide_commands"],
+                "critical": aggregation_result["user_guide_priority_critical"],
+                "high": aggregation_result["user_guide_priority_high"],
+                "next_action": aggregation_result["user_guide_next_action"],
+                "session_state": session_state  # 返回会话状态
+            }
         
-        if validation_result["status"] == "missing_data":
+        # 数据完整,继续分析
+        merged_data = json.loads(aggregation_result["result"])
+        
+        if merged_data["status"] == "missing_data":
             logger.warning("数据不完整，返回补齐指引")
             return {
                 "type": "missing_data",
-                "missing_fields": validation_result["missing_fields"],
-                "补齐指引": validation_result["补齐指引"]
+                "missing_fields": merged_data["missing_fields"],
+                "补齐指引": merged_data["补齐指引"]
             }
         
         logger.info("数据校验通过")
@@ -292,14 +333,14 @@ class SwingQuantWorkflow:
         technical_result = None
         if uploaded_files:
             try:
-                technical_result = self.technical.analyze(uploaded_files, validation_result)
+                technical_result = self.technical.analyze(uploaded_files, merged_data)
                 logger.info(f"技术面评分: {technical_result.get('ta_score', 0)}")
             except Exception as e:
                 logger.warning(f"技术面分析失败，跳过: {e}")
         
         # === Step 4: 评分计算 (CODE2) ===
         scoring_result = self.scoring_engine.calculate(
-            validation_result, 
+            merged_data, 
             technical_result
         )
         logger.info(f"总评分: {scoring_result['scoring']['total_score']}")
@@ -310,7 +351,7 @@ class SwingQuantWorkflow:
         
         # === Step 6: 策略辅助计算 (CODE3) ===
         strategy_calc_result = self.strategy_calc.calculate(
-            validation_result,
+            merged_data,
             scenario_result,
             technical_result
         )
@@ -319,7 +360,7 @@ class SwingQuantWorkflow:
         strategies = self.strategy_gen.generate(
             scenario_result,
             strategy_calc_result,
-            validation_result
+            merged_data
         )
         logger.info(f"生成策略数: {len(strategies['strategies'])}")
         
@@ -327,7 +368,7 @@ class SwingQuantWorkflow:
         ranking_result = self.ranking_engine.rank(
             strategies,
             scenario_result,
-            validation_result
+            merged_data
         )
         
         # === Step 9: 策略对比 (Agent 7) ===
@@ -340,7 +381,7 @@ class SwingQuantWorkflow:
         
         # === Step 10: 最终报告生成 (Agent 8) ===
         final_report = self.report_gen.generate(
-            validation_result,
+            merged_data,
             technical_result,
             scenario_result,
             comparison_result,
@@ -359,18 +400,18 @@ def main():
         description="Swing Quant 美股期权量化分析",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-示例用法:
-  # 生成命令清单
-  python main.py "AAPL"
-  
-  # 单标的分析
-  python main.py "AAPL数据" --files chart1.png chart2.png
-  
-  # 批量分析（文件夹）
-  python main.py "批量分析" --folder data/charts/
-  
-  # 批量分析（多个文件）
-  python main.py "批量分析" --files data/*.png
+        示例用法:
+        # 生成命令清单
+        python main.py "AAPL"
+        
+        # 单标的分析
+        python main.py "AAPL数据" --files chart1.png chart2.png
+        
+        # 批量分析（文件夹）
+        python main.py "批量分析" --folder data/charts/
+        
+        # 批量分析（多个文件）
+        python main.py "批量分析" --files data/*.png
         """
     )
     

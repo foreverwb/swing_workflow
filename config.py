@@ -197,6 +197,11 @@ class Config:
     MODEL_TEMPERATURE = 0.5
     MODEL_MAX_TOKENS = 4000
     
+    # === 会话变量配置 (用于数据累积) ===
+    ENABLE_DATA_ACCUMULATION = True  # 是否启用数据累积
+    MAX_ACCUMULATION_ROUNDS = 5      # 最多累积轮次
+    ACCUMULATION_TIMEOUT = 3600      # 累积超时时间(秒)
+    
     @classmethod
     def from_yaml(cls, yaml_path: str) -> 'Config':
         """从 YAML 文件加载配置"""
