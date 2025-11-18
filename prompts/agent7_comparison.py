@@ -33,46 +33,44 @@ def get_system_prompt() -> str:
 返回JSON格式。"""
 
 
-def get_user_prompt(comparison: dict, scenario: dict, strategies: dict) -> str:
+def get_user_prompt(comparison_data: dict, scenario: dict, strategies: dict) -> str:  # ✅ 改为字典
     """用户提示词"""
-    comp_json = comparison.get("result", "{}")
     
     return f"""请基于以下数据对策略进行排序:
 
-## 定量对比结果
-```json
-{comp_json}
-```
+        ## 定量对比结果
+        ```json
+        {json.dumps(comparison_data, ensure_ascii=False, indent=2)}
+        ```
 
-## 场景分析
-```json
-{scenario}
-```
+        ## 场景分析
+        ```json
+        {json.dumps(scenario, ensure_ascii=False, indent=2)}
+        ```
 
-## 策略清单
-```json
-{strategies}
-```
+        ## 策略清单
+        ```json
+        {json.dumps(strategies, ensure_ascii=False, indent=2)}
+        ```
 
-## 排序要求
-1. 计算每个策略的综合评分(0-100)
-2. 按评分从高到低排序
-3. 对每个策略给出:
-   - rank: 排名
-   - strategy_name: 策略名称
-   - overall_score: 综合评分
-   - rating: 评级(strong_buy/buy/hold/avoid)
-   - scenario_match_score: 场景匹配分(0-100)
-   - risk_reward_score: 风险收益分(0-100)
-   - greeks_health_score: Greeks健康分(0-100)
-   - execution_difficulty_score: 执行难度分(0-100)
-   - strengths: 主要优势列表
-   - weaknesses: 主要劣势列表
-   - recommendation_reason: 推荐理由(100字以内)
-   - best_for: 最适合的投资者类型/市场环境
+        ## 排序要求
+        1. 计算每个策略的综合评分(0-100)
+        2. 按评分从高到低排序
+        3. 对每个策略给出:
+        - rank: 排名
+        - strategy_name: 策略名称
+        - overall_score: 综合评分
+        - rating: 评级(strong_buy/buy/hold/avoid)
+        - scenario_match_score: 场景匹配分(0-100)
+        - risk_reward_score: 风险收益分(0-100)
+        - greeks_health_score: Greeks健康分(0-100)
+        - execution_difficulty_score: 执行难度分(0-100)
+        - strengths: 主要优势列表
+        - weaknesses: 主要劣势列表
+        - recommendation_reason: 推荐理由(100字以内)
+        - best_for: 最适合的投资者类型/市场环境
 
-4. 输出top3策略的详细对比表
-5. 给出组合建议(如果多个策略可以互补)
-6. 标注特殊风险警示
-
-请返回JSON格式的排序结果。"""
+        4. 输出top3策略的详细对比表
+        5. 给出组合建议(如果多个策略可以互补)
+        6. 标注特殊风险警示
+        """

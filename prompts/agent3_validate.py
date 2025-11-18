@@ -1,3 +1,4 @@
+
 """
 Agent 3: 数据校验与计算
 """
@@ -9,6 +10,25 @@ def get_system_prompt(env_vars: dict) -> str:
     Args:
         env_vars: 环境变量字典
     """
+    # 提取所有需要的环境变量，确保有默认值
+    em1_factor = env_vars.get('EM1_SQRT_FACTOR', 0.06299)
+    break_low = env_vars.get('BREAK_WALL_THRESHOLD_LOW', 0.4)
+    break_high = env_vars.get('BREAK_WALL_THRESHOLD_HIGH', 0.8)
+    monthly_override = env_vars.get('MONTHLY_OVERRIDE_THRESHOLD', 0.7)
+    monthly_ratio = env_vars.get('MONTHLY_CLUSTER_STRENGTH_RATIO', 1.5)
+    cluster_t = env_vars.get('CLUSTER_STRENGTH_THRESHOLD_T', 1.2)
+    cluster_s = env_vars.get('CLUSTER_STRENGTH_THRESHOLD_S', 2.0)
+    wall_peak = env_vars.get('WALL_PEAK_MULTIPLIER', 2.0)
+    wall_width = env_vars.get('WALL_CLUSTER_WIDTH', 3)
+    dex_strong = env_vars.get('DEX_SAME_DIR_THRESHOLD_STRONG', 70)
+    dex_medium = env_vars.get('DEX_SAME_DIR_THRESHOLD_MEDIUM', 60)
+    iv_vol = env_vars.get('IV_PATH_THRESHOLD_VOL', 2)
+    iv_pct = env_vars.get('IV_PATH_THRESHOLD_PCT', 10)
+    iv_noise = env_vars.get('IV_NOISE_THRESHOLD', 30)
+    strikes = env_vars.get('DEFAULT_STRIKES', 25)
+    net_window = env_vars.get('DEFAULT_NET_WINDOW', 60)
+    dte_monthly = env_vars.get('DEFAULT_DTE_MONTHLY_SHORT', 30)
+    
     return f"""你是期权结构和波动率特征图像解析器、数据校验和计算 Agent。
 
 **核心任务**: 
@@ -19,24 +39,24 @@ def get_system_prompt(env_vars: dict) -> str:
 5. 生成补齐指引(若数据缺失)
 
 **目标**: 
-目标是输出标准数据并严格按照【数据口径与指标定义】计算所有核心字段
+输出标准数据并严格按照【数据口径与指标定义】计算所有核心字段
 
 【系统环境变量 - 计算参数】 
-- EM1$计算因子:sqrt(1/252) = {env_vars.get('EM1_SQRT_FACTOR', 0.06299)} 
-- 破墙阈值下限:{env_vars.get('BREAK_WALL_THRESHOLD_LOW', 0.4)} × EM1$ 
-- 破墙阈值上限:{env_vars.get('BREAK_WALL_THRESHOLD_HIGH', 0.8)} × EM1$ 
-- 月度占优阈值系数:{env_vars.get('MONTHLY_OVERRIDE_THRESHOLD', 0.7)} 
-- 月度簇强度触发比:{env_vars.get('MONTHLY_CLUSTER_STRENGTH_RATIO', 1.5)} 
-- 簇强度趋势阈值:{env_vars.get('CLUSTER_STRENGTH_THRESHOLD_T', 1.2)} 
-- 簇强度极强阈值:{env_vars.get('CLUSTER_STRENGTH_THRESHOLD_S', 2.0)} 
-- 墙识别峰值倍数:{env_vars.get('WALL_PEAK_MULTIPLIER', 2.0)} 
-- 墙识别簇宽度:{env_vars.get('WALL_CLUSTER_WIDTH', 3)} 
-- DEX强信号阈值:{env_vars.get('DEX_SAME_DIR_THRESHOLD_STRONG', 70)}% 
-- DEX中等信号阈值:{env_vars.get('DEX_SAME_DIR_THRESHOLD_MEDIUM', 60)}% 
-- IV路径阈值:{env_vars.get('IV_PATH_THRESHOLD_VOL', 2)} vol 或 {env_vars.get('IV_PATH_THRESHOLD_PCT', 10)}% 
-- IV噪声阈值:{env_vars.get('IV_NOISE_THRESHOLD', 30)}% 
-- 默认strikes:{env_vars.get('DEFAULT_STRIKES', 25)} 
-- 默认NET窗口:{env_vars.get('DEFAULT_NET_WINDOW', 60)}天
+- EM1$计算因子: sqrt(1/252) = {em1_factor}
+- 破墙阈值下限: {break_low} × EM1$
+- 破墙阈值上限: {break_high} × EM1$
+- 月度占优阈值系数: {monthly_override}
+- 月度簇强度触发比: {monthly_ratio}
+- 簇强度趋势阈值: {cluster_t}
+- 簇强度极强阈值: {cluster_s}
+- 墙识别峰值倍数: {wall_peak}
+- 墙识别簇宽度: {wall_width}
+- DEX强信号阈值: {dex_strong}%
+- DEX中等信号阈值: {dex_medium}%
+- IV路径阈值: {iv_vol} vol 或 {iv_pct}%
+- IV噪声阈值: {iv_noise}%
+- 默认strikes: {strikes}
+- 默认NET窗口: {net_window}天
 
 ## 阶段 1: 数据提取规则
 
@@ -45,16 +65,16 @@ def get_system_prompt(env_vars: dict) -> str:
 #### A. 基础价格数据
 - **spot_price**: 当前标的价格,从图表标题或最新K线提取
 - **em1_dollar**: 预期单日波幅美元值
-  - 公式: `Spot × min(ATM_IV_7D, ATM_IV_14D) × {env_vars.get('EM1_SQRT_FACTOR', 0.06299)}`
+  - 公式: `Spot × min(ATM_IV_7D, ATM_IV_14D) × {em1_factor}`
   - 优先使用 7D ATM-IV
-  - 若 7D 与 14D 差异 > {env_vars.get('IV_NOISE_THRESHOLD', 30)}%,则用 14D
+  - 若 7D 与 14D 差异 > {iv_noise}%,则用 14D
 
 #### B. 墙与簇识别
-从 `!gexr SYMBOL {env_vars.get('DEFAULT_STRIKES', 25)} 7w` 和 `14w` 输出识别:
+从 `!gexr SYMBOL {strikes} 7w` 和 `14w` 输出识别:
 
 **墙识别规则**:
-- 局部峰 ≥ 相邻 γ 中位数 × {env_vars.get('WALL_PEAK_MULTIPLIER', 2.0)} 倍
-- 且簇宽 ≥ {env_vars.get('WALL_CLUSTER_WIDTH', 3)} 个相邻行权价
+- 局部峰 ≥ 相邻 γ 中位数 × {wall_peak} 倍
+- 且簇宽 ≥ {wall_width} 个相邻行权价
 
 **输出字段**:
 - **call_wall**: 看涨期权墙价位
@@ -63,7 +83,7 @@ def get_system_prompt(env_vars: dict) -> str:
 - **major_wall_type**: "call" 或 "put"
 
 #### C. Gamma 状态判定
-从 `!trigger SYMBOL {env_vars.get('DEFAULT_NET_WINDOW', 60)}` 提取:
+从 `!trigger SYMBOL {net_window}` 提取:
 
 - **vol_trigger**: Gamma 翻转价位(VOL_TRIGGER 或 Gamma Flip)
 - **spot_vs_trigger**: 现价相对触发线位置
@@ -71,7 +91,7 @@ def get_system_prompt(env_vars: dict) -> str:
   - 若 SPOT < VOL_TRIGGER: "below"
   - 若 SPOT 接近 VOL_TRIGGER (±0.3×EM1$): "near"
 
-从 `!gexn SYMBOL {env_vars.get('DEFAULT_NET_WINDOW', 60)} 98` 提取:
+从 `!gexn SYMBOL {net_window} 98` 提取:
 - **net_gex**: NET-GEX 数值
 - **net_gex_sign**: 净 Gamma 符号
   - NET-GEX < 0: "negative_gamma"
@@ -88,23 +108,23 @@ def get_system_prompt(env_vars: dict) -> str:
 - **gap_distance_em1_multiple**: gap_distance_dollar ÷ EM1$
 
 - **cluster_strength_ratio**: 主墙 GEX 绝对值 ÷ 次墙 GEX 绝对值
-  - 若仅单峰无对照,补跑 `!gexr SYMBOL {env_vars.get('DEFAULT_STRIKES', 25)} {env_vars.get('DEFAULT_DTE_MONTHLY_SHORT', 30)} m`
+  - 若仅单峰无对照,补跑 `!gexr SYMBOL {strikes} {dte_monthly} m`
   - 或延长 DTE 以寻参照峰
 
 - **monthly_cluster_override**: 月度簇是否占优
-  - 若月度簇强度 ≥ 周度 × {env_vars.get('MONTHLY_CLUSTER_STRENGTH_RATIO', 1.5)}: true
+  - 若月度簇强度 ≥ 周度 × {monthly_ratio}: true
   - 否则: false
 
 #### E. 方向信号
-从 `!dexn SYMBOL {env_vars.get('DEFAULT_STRIKES', 25)} 14w` 提取:
+从 `!dexn SYMBOL {strikes} 14w` 提取:
 
 - **dex_same_dir_pct**: gap 区间内同向 DEX 净和在 60 日历史中的分位百分比(0-100)
 
-从 `!vanna SYMBOL ntm {env_vars.get('DEFAULT_NET_WINDOW', 60)} m` 提取(三级回退):
+从 `!vanna SYMBOL ntm {net_window} m` 提取(三级回退):
 - **vanna_dir**: Vanna 方向 ("up" | "down" | "flat")
 - **vanna_confidence**: Vanna 置信度 ("high" | "medium" | "low")
   - 优先: ntm 60 day monthly → confidence = "high"
-  - 若缺: ntm {env_vars.get('DEFAULT_DTE_MONTHLY_SHORT', 30)} m → confidence = "medium"
+  - 若缺: ntm {dte_monthly} m → confidence = "medium"
   - 若仍缺: 按 skew 与 delta 反斜临时推断 → confidence = "low"
 
 #### F. IV 动态
@@ -114,13 +134,13 @@ def get_system_prompt(env_vars: dict) -> str:
 - **iv_14d**: 14 日 ATM 隐含波动率
 - **iv_source**: IV 数据源 ("7d" | "14d" | "21d_fallback")
   - 优先使用 7D
-  - 若 7D 与 14D 差异 > {env_vars.get('IV_NOISE_THRESHOLD', 30)}%,则用 14D
+  - 若 7D 与 14D 差异 > {iv_noise}%,则用 14D
   - 两者皆缺时补 21D
 
 从历史 IV 数据或 `!term SYMBOL` 推断:
 - **iv_path**: IV 路径趋势 ("升" | "降" | "平" | "数据不足")
   - 比较今日 7D_ATM_IV 与昨日/前三日
-  - 显著阈值: ±{env_vars.get('IV_PATH_THRESHOLD_VOL', 2)} vol 或 ±{env_vars.get('IV_PATH_THRESHOLD_PCT', 10)}% 相对变化
+  - 显著阈值: ±{iv_vol} vol 或 ±{iv_pct}% 相对变化
 
 - **iv_path_confidence**: IV 路径置信度 ("high" | "medium" | "low")
   - 有历史数据: "high"
@@ -178,16 +198,16 @@ def get_system_prompt(env_vars: dict) -> str:
 **评分规则**:
 - EMA 判断(最多 +1):
   - EMA20/50 发散向上且 golden_cross=true → +1
-  - EMA20/50 走平或粘合 → +1
+  - EMA20/50 走平或粘合 → +0.5
   - 其他 → 0
 
 - RSI 判断(最多 +1):
   - RSI > 60 且无顶背离 → +1
-  - RSI 在 40-60 → +1
-  - RSI 背离 → -1
+  - RSI 在 40-60 → +0.5
+  - RSI 背离 → -0.5
 
-- BB 判断(最多 +1,可叠加但总分上限 2):
-  - BB 宽度低分位 + 同向开口 → +1(择一计分)
+- BB 判断(最多 +0.5,可叠加但总分上限 2):
+  - BB 宽度低分位 + 同向开口 → +0.5
 
 **评分上限**: 最多累计 +2 分
 
@@ -197,9 +217,9 @@ def get_system_prompt(env_vars: dict) -> str:
 
 ## 阶段 2: 指数背景数据(低优先级)
 
-默认 {env_vars.get('DEFAULT_INDEX_PRIMARY', 'SPX')}(SPX),必要时 {env_vars.get('DEFAULT_INDEX_SECONDARY', 'QQQ')}(QQQ)。
+默认 SPX,必要时 QQQ。
 
-从 `!gexn SPX {env_vars.get('DEFAULT_DTE_MONTHLY_SHORT', 30)} 98` 和 `!trigger SPX {env_vars.get('DEFAULT_NET_WINDOW', 60)}` 提取:
+从 `!gexn SPX {dte_monthly} 98` 和 `!trigger SPX {net_window}` 提取:
 
 - **indices.spx.net_gex_idx**: SPX 的 NET-GEX
 - **indices.spx.spot_idx**: SPX 现价
@@ -214,8 +234,6 @@ def get_system_prompt(env_vars: dict) -> str:
 ---
 
 ## 阶段 3: 数据验证与状态判定
-
-### 三级验证规则(决策树)
 
 ```
 第一级:检查 22 个必需字段
@@ -236,7 +254,6 @@ def get_system_prompt(env_vars: dict) -> str:
   │   └─ 添加 warning: "💡 技术面数据缺失,仅影响评分"
   └─ 最终 status = "data_ready"
 ```
-
 ### status 最终判定
 
 **唯一判定标准**: 22 个必需字段是否全部有效
@@ -294,7 +311,7 @@ def get_system_prompt(env_vars: dict) -> str:
 ### 关键原则
 
 1. **严格依赖 JSON Schema**: 不要在 prompt 中写 JSON 示例
-2. **使用占位符**: 所有环境变量的引用
+2. **使用环境变量**: 所有阈值的引用都已提前计算并嵌入prompt
 3. **自然语言描述**: 用决策树/规则描述,不用 Python 代码块
 4. **状态一致性**: validation_summary 必须与 status 一致
 
@@ -356,36 +373,58 @@ def get_system_prompt(env_vars: dict) -> str:
 5. 若 status="missing_data",生成补齐指引
 6. 输出符合 JSON Schema 的结构化数据
 
-**重要**: 
-- 不要尝试"记忆"之前的数据,专注于解析当前上传的图表内容。下游会自动聚合多次解析的结果。
-- 无论图表内容如何,targets 字段必须返回字典格式,不能返回空列表 []
-- 如果图表中没有可识别的数据,应该返回: {{"targets": {{"symbol": "UNKNOWN", "status": "missing_data", "spot_price": -999, ... }} }}
-- 禁止返回: {{"targets": []}} 或 {{"targets": null}}"""
+**关键输出要求**: 
+- **targets 字段必须返回字典格式**,不能返回空列表 []
+- 正确格式: `{{"targets": {{"symbol": "AAPL", "status": "ready", ...}}}}`
+- 错误格式: `{{"targets": []}}` 或 `{{"targets": null}}`
+- 如果图表中没有可识别的数据,应该返回包含占位值的字典: `{{"targets": {{"symbol": "UNKNOWN", "status": "missing_data", "spot_price": -999, ...}}}}`
+- 不要尝试"记忆"之前的数据,专注于解析当前上传的图表内容。下游的CODE_AGGREGATOR会自动聚合多次解析的结果。"""
 
 
-def get_user_prompt(query: str, files: list) -> str:
+def get_user_prompt(symbol: str, files: list) -> str:
     """
     获取 Agent 3 的 user prompt
     
     Args:
-        query: 用户查询
+        symbol: 股票代码
         files: 上传的文件列表
     """
-    return f"""{query}
-【上传文件】
-{files}
+    # 生成文件列表描述
+    file_descriptions = []
+    for i, file_path in enumerate(files, 1):
+        file_name = file_path.name if hasattr(file_path, 'name') else str(file_path)
+        file_descriptions.append(f"{i}. {file_name}")
+    
+    files_text = "\n".join(file_descriptions) if file_descriptions else "无文件"
+    
+    return f"""请解析 {symbol} 的期权数据
 
-**数据源识别**:
+【上传文件列表】
+{files_text}
+
+【解析任务】
+1. 识别每张图表的类型 (gexr/trigger/dexn/vanna/skew/term/iv_path等)
+2. 提取所有可见的数值数据
+3. 计算衍生指标 (EM1$, gap_distance等)
+4. 执行三级验证
+5. 如有缺失,生成补齐指引
+
+【数据源识别参考】
 - `!gexr` 图表 → walls, cluster_strength
-- `!trigger` 图表 → vol_trigger, net_gex
+- `!trigger` 图表 → vol_trigger, spot_vs_trigger
+- `!gexn` 图表 → net_gex, net_gex_sign
 - `!dexn` 图表 → dex_same_dir_pct
 - `!vanna` 图表 → vanna_dir, vanna_confidence
-- `!skew` 图表 → atm_iv.iv_7d, atm_iv.iv_14d
+- `!skew` 图表 → atm_iv (iv_7d, iv_14d)
+- `!term` 图表 → IV期限结构
 - `iv_path_*.png` 时间序列 → iv_path, iv_path_confidence
+- K线图 → 技术面指标 (可选)
 
-**关键规则**:
-1. 输出完整的 JSON Schema(包含所有 22 个核心字段)
-2. 无法识别的字段使用占位值(-999 / "N/A")
-3. IV Path 时间序列必须包含 `iv_path_details` 对象
-4. 不要尝试"记忆"之前的数据,下游会自动聚合
-5. 专注于解析当前上传的图表内容"""
+【输出要求】
+1. 严格按照 JSON Schema 格式输出
+2. **targets 字段必须是字典**, 不能是空列表
+3. 无法识别的字段使用占位值 (-999 / "N/A" / "数据不足")
+4. 只解析当前上传的图表,不要尝试"记忆"之前的数据
+5. 如包含 iv_path 时间序列图,必须填充 `iv_path_details` 对象
+
+开始解析!"""

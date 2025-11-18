@@ -32,32 +32,33 @@ def get_system_prompt() -> str:
 返回JSON格式，包含scenarios数组。"""
 
 
-def get_user_prompt(scoring_result: dict) -> str:
+
+def get_user_prompt(scoring_data: dict) -> str:  # ✅ 改为直接接收字典
     """用户提示词"""
-    result_json = scoring_result.get("result", "{}")
     
     return f"""请基于以下四维评分数据，推演市场场景:
 
-## 评分数据
-```json
-{result_json}
-```
+        ## 评分数据
+        ```json
+        {json.dumps(scoring_data, ensure_ascii=False, indent=2)}
+        ```
+        ## 分析要求
+        1. 生成3-5个差异化场景
+        2. 每个场景需包含:
+        - scenario_name: 场景名称
+        - probability: 发生概率(%)
+        - direction: 方向(bullish/bearish/neutral)
+        - volatility_expectation: IV变化预期(expanding/contracting/stable)
+        - time_horizon: 时间窗口(days)
+        - trigger_conditions: 触发条件列表
+        - greeks_impact: Greeks表现描述
+        - risk_reward_ratio: 风险收益比
+        - key_levels: 关键价格位
+        - notes: 补充说明
 
-## 分析要求
-1. 生成3-5个差异化场景
-2. 每个场景需包含:
-   - scenario_name: 场景名称
-   - probability: 发生概率(%)
-   - direction: 方向(bullish/bearish/neutral)
-   - volatility_expectation: IV变化预期(expanding/contracting/stable)
-   - time_horizon: 时间窗口(days)
-   - trigger_conditions: 触发条件列表
-   - greeks_impact: Greeks表现描述
-   - risk_reward_ratio: 风险收益比
-   - key_levels: 关键价格位
-   - notes: 补充说明
+        3. 概率总和应接近100%
+        4. 场景应涵盖多种可能性(乐观/中性/悲观)
 
-3. 概率总和应接近100%
-4. 场景应涵盖多种可能性(乐观/中性/悲观)
+        请返回JSON格式的场景分析。
 
-请返回JSON格式的场景分析。"""
+        """
