@@ -5,10 +5,19 @@
 
 from .workflow_engine import WorkflowEngine
 from .file_handler import FileHandler
-from .model_client import ModelClient
-
-__all__ = [
+from .model_client import (
+    BaseModelClient,
+    AnthropicClient,
+    OpenAICompatibleClient,
+    ModelClientManager,
+    ModelClientFactory
+)
+all = [
     'WorkflowEngine',
     'FileHandler',
-    'ModelClient'
+    'BaseModelClient',
+    'AnthropicClient',
+    'OpenAICompatibleClient',
+    'ModelClientManager',
+    'ModelClientFactory'
 ]
