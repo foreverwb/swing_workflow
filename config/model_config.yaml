@@ -20,7 +20,7 @@ agents:
   # Agent 2: 命令清单生成（简单任务，使用经济模型）
   agent2:
     provider: dmxapi
-    model:Qwen3-8B        # 使用小模型节省成本
+    model: Qwen3-8B        # 使用小模型节省成本
     temperature: 0.3
     max_tokens: 2048
   

@@ -291,9 +291,17 @@ class ModelClientManager:
         Args:
             config_path: 配置文件路径
         """
-        from utils.config_loader import load_model_config
+        import yaml
+        from pathlib import Path
         
-        self.full_config = load_model_config(config_path)
+        # 直接加载 YAML 配置
+        config_file = Path(config_path)
+        if not config_file.exists():
+            raise FileNotFoundError(f"模型配置文件不存在: {config_path}")
+        
+        with open(config_file, 'r', encoding='utf-8') as f:
+            self.full_config = yaml.safe_load(f)
+        
         self.default_config = self.full_config.get('default', {})
         self.agents_config = self.full_config.get('agents', {})
         self._clients_cache = {}  # Agent客户端缓存

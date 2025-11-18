@@ -145,7 +145,8 @@ def main(
             missing_fields=missing_fields,
             merge_history=merge_history,
             total_fields=22,
-            last_merge_failed=last_merge_failed
+            last_merge_failed=last_merge_failed,
+            symbol=symbol
         )
         
         # === 输出结构化的结果 ===
@@ -483,7 +484,8 @@ def generate_smart_guide(
     missing_fields: list,
     merge_history: list,
     total_fields: int,
-    last_merge_failed: bool = False
+    last_merge_failed: bool = False,
+    symbol: str = ''
 ) -> dict:
     """
     生成智能补齐指引
@@ -521,7 +523,7 @@ def generate_smart_guide(
     
     for item in missing_fields:
         field_path = item["field"]
-        cmd_info = suggest_command(field_path)
+        cmd_info = suggest_command(field_path, symbol)
         
         priority = cmd_info["priority"]
         priority_groups[priority].append({
@@ -546,31 +548,31 @@ def generate_smart_guide(
     }
 
 
-def suggest_command(field_path: str) -> dict:
+def suggest_command(field_path: str, symbol: str) -> dict:
     """根据字段路径建议命令"""
     command_map = {
         "gamma_metrics.vol_trigger": {
-            "command": "!trigger SYMBOL 60",
+            "command": "!trigger {symbol} 60",
             "description": "Gamma 触发线",
             "priority": "critical"
         },
         "gamma_metrics.net_gex": {
-            "command": "!gexn SYMBOL 60 98",
+            "command": "!gexn {symbol} 60 98",
             "description": "净 Gamma 敞口",
             "priority": "critical"
         },
         "walls.call_wall": {
-            "command": "!gexr SYMBOL 25 7w",
+            "command": "!gexr {symbol} 25 7w",
             "description": "Call 墙位",
             "priority": "high"
         },
         "atm_iv.iv_7d": {
-            "command": "!skew SYMBOL ivmid atm 7",
+            "command": "!skew {symbol} ivmid atm 7",
             "description": "7日 ATM 波动率",
             "priority": "high"
         },
         "directional_metrics.dex_same_dir_pct": {
-            "command": "!dexn SYMBOL 25 14w",
+            "command": "!dexn {symbol} 25 14w",
             "description": "DEX 方向一致性",
             "priority": "medium"
         },
@@ -578,7 +580,7 @@ def suggest_command(field_path: str) -> dict:
     }
     
     return command_map.get(field_path, {
-        "command": f"!gexr SYMBOL 25 7w",  # 默认命令
+        "command": f"!gexr {symbol} 25 7w",  # 默认命令
         "description": field_path,
         "priority": "medium"
     })
