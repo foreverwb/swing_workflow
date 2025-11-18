@@ -203,16 +203,22 @@ def detect_events(symbol, current_date_str, api_key, enable_api, cache_days, url
     }
     return json.dumps(result, indent=2, ensure_ascii=False)
 
-def main():
-    user_input = """{{#1001.query#}}"""
-    api_key = """{{#env.ALPHA_VANTAGE_API_KEY#}}"""
-    url = """{{#env.ALPHA_VANTAGE_API_URL#}}"""
-    enable_api = """{{#env.ENABLE_EARNINGS_API#}}"""
-    cache_days = """{{#env.EARNINGS_CACHE_DAYS#}}"""
+def main(user_query: str, **env_vars) -> dict:
+    """
+    事件检测主函数
     
-    match = re.search(r'\b([A-Z]{1,5})\b', user_input.upper())
+    Args:
+        user_query: 用户查询字符串（包含股票代码）
+        **env_vars: 环境变量字典
+    """
+    api_key = env_vars.get('ALPHA_VANTAGE_API_KEY', '')
+    url = env_vars.get('ALPHA_VANTAGE_API_URL', 'https://www.alphavantage.co/query?')
+    enable_api = env_vars.get('ENABLE_EARNINGS_API', True)
+    cache_days = env_vars.get('EARNINGS_CACHE_DAYS', 30)
+    
+    match = re.search(r'\b([A-Z]{1,5})\b', user_query.upper())
     symbol = match.group(1) if match else "UNKNOWN"
     current_date = datetime.now().strftime("%Y-%m-%d")
     
     result = detect_events(symbol, current_date, api_key, enable_api, cache_days, url)
-    return result
+    return {"result": result}

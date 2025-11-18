@@ -10,11 +10,11 @@ from loguru import logger
 
 from core.model_client import ModelClientManager
 from code_nodes import (
-    code1_event_detection,
-    code2_scoring,
-    code3_strategy_calc,
-    code4_comparison,
-    code_aggregator
+    event_detection_main,
+    scoring_main,
+    strategy_calc_main,
+    comparison_main,
+    aggregator_main
 )
 import prompts
 import schemas
@@ -107,7 +107,7 @@ class WorkflowEngine:
         
         # Step 1: CODE1 事件检测
         logger.info("🔍 Step 1: 事件检测")
-        event_result = code1_event_detection.main(
+        event_result =event_detection_main(
             merged_data.get("symbol", ""),
             api_key=self.env_vars.get("ALPHA_VANTAGE_API_KEY"),
             **self.env_vars
@@ -115,7 +115,7 @@ class WorkflowEngine:
         
         # Step 2: CODE2 评分计算
         logger.info("📊 Step 2: 四维评分")
-        scoring_result = code2_scoring.main(
+        scoring_result = scoring_main.main(
             agent3_output=json.dumps(merged_data),
             technical_score=merged_data.get("technical_analysis", {}).get("ta_score", 0),
             **self.env_vars
@@ -127,7 +127,7 @@ class WorkflowEngine:
         
         # Step 4: CODE3 策略辅助计算
         logger.info("🧮 Step 4: 策略辅助")
-        strategy_calc_result = code3_strategy_calc.main(
+        strategy_calc_result = strategy_calc_main(
             agent3_output=merged_data,
             agent5_output=agent5_result["content"],
             technical_score=merged_data.get("technical_analysis", {}).get("ta_score", 0),
@@ -144,7 +144,7 @@ class WorkflowEngine:
         
         # Step 6: CODE4 策略对比
         logger.info("⚖️ Step 6: 策略对比")
-        comparison_result = code4_comparison.main(
+        comparison_result = comparison_main(
             strategies_output=agent6_result["content"],
             scenario_output=agent5_result["content"],
             agent3_output=merged_data,
@@ -231,7 +231,7 @@ class WorkflowEngine:
     
     def _run_code_aggregator(self, agent3_output: Dict) -> Dict:
         """CODE_AGGREGATOR: 数据聚合"""
-        result = code_aggregator.main(
+        result = aggregator_main(
             agent3_output=agent3_output,
             first_parse_data=self.conversation_vars["first_parse_data"],
             current_symbol=self.conversation_vars["current_symbol"],

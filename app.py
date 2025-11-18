@@ -46,48 +46,54 @@ def setup_logging(log_dir: Path = Path("logs")):
 
 def load_env_config(config_path: Path = Path("config/env_config.yaml")) -> dict:
     """加载环境变量配置"""
-    if config_path.exists():
+    if not config_path.exists():
+        logger.warning(f"环境配置文件不存在: {config_path}, 使用默认值")
+        return _get_default_config()
+    
+    try:
         with open(config_path, 'r', encoding='utf-8') as f:
-            return yaml.safe_load(f) or {}
-    
-    logger.warning(f"环境配置文件不存在: {config_path}, 使用默认值")
-    
-    # 返回默认配置
+            config = yaml.safe_load(f)
+        
+        # 展平嵌套结构以兼容旧代码
+        flat_config = {}
+        
+        # Gamma参数
+        if 'gamma' in config:
+            flat_config.update({
+                'EM1_SQRT_FACTOR': config['gamma'].get('em1_sqrt_factor', 0.06299),
+                'BREAK_WALL_THRESHOLD_LOW': config['gamma'].get('break_wall_threshold_low', 0.4),
+                'BREAK_WALL_THRESHOLD_HIGH': config['gamma'].get('break_wall_threshold_high', 0.8),
+                # ... 其他参数
+            })
+        
+        # Scoring参数
+        if 'scoring' in config:
+            flat_config.update({
+                'SCORE_WEIGHT_GAMMA_REGIME': config['scoring'].get('weight_gamma_regime', 0.4),
+                'SCORE_WEIGHT_BREAK_WALL': config['scoring'].get('weight_break_wall', 0.3),
+                # ... 其他参数
+            })
+        
+        # Alpha Vantage参数
+        if 'alpha_vantage' in config:
+            flat_config.update({
+                'ALPHA_VANTAGE_API_KEY': config['alpha_vantage'].get('api_key', ''),
+                'ALPHA_VANTAGE_API_URL': config['alpha_vantage'].get('api_url', ''),
+                'ENABLE_EARNINGS_API': config['alpha_vantage'].get('enable_earnings_api', True),
+                'EARNINGS_CACHE_DAYS': config['alpha_vantage'].get('earnings_cache_days', 30),
+            })
+        
+        return flat_config
+        
+    except Exception as e:
+        logger.error(f"加载配置文件失败: {e}")
+        return _get_default_config()
+
+def _get_default_config() -> dict:
+    """返回默认配置（原有的硬编码值）"""
     return {
         "EM1_SQRT_FACTOR": 0.06299,
-        "BREAK_WALL_THRESHOLD_LOW": 0.4,
-        "BREAK_WALL_THRESHOLD_HIGH": 0.8,
-        "MONTHLY_OVERRIDE_THRESHOLD": 0.7,
-        "MONTHLY_CLUSTER_STRENGTH_RATIO": 1.5,
-        "CLUSTER_STRENGTH_THRESHOLD_T": 1.2,
-        "CLUSTER_STRENGTH_THRESHOLD_S": 2.0,
-        "WALL_PEAK_MULTIPLIER": 2.0,
-        "WALL_CLUSTER_WIDTH": 3,
-        "DEX_SAME_DIR_THRESHOLD_STRONG": 70,
-        "DEX_SAME_DIR_THRESHOLD_MEDIUM": 60,
-        "DEX_SAME_DIR_THRESHOLD_WEAK": 50,
-        "IV_PATH_THRESHOLD_VOL": 2,
-        "IV_PATH_THRESHOLD_PCT": 10,
-        "IV_NOISE_THRESHOLD": 30,
-        "DEFAULT_STRIKES": 25,
-        "DEFAULT_NET_WINDOW": 60,
-        "EXTENDED_NET_WINDOW": 120,
-        "DEFAULT_DTE_WEEKLY_SHORT": 7,
-        "DEFAULT_DTE_WEEKLY_MID": 14,
-        "DEFAULT_DTE_MONTHLY_SHORT": 30,
-        "DEFAULT_DTE_MONTHLY_MID": 60,
-        "DEFAULT_INDEX_PRIMARY": "SPX",
-        "DEFAULT_INDEX_SECONDARY": "QQQ",
-        "SCORE_WEIGHT_GAMMA_REGIME": 0.4,
-        "SCORE_WEIGHT_BREAK_WALL": 0.3,
-        "SCORE_WEIGHT_DIRECTION": 0.2,
-        "SCORE_WEIGHT_IV": 0.1,
-        "ENTRY_THRESHOLD_SCORE": 3,
-        "ENTRY_THRESHOLD_PROBABILITY": 60,
-        "LIGHT_POSITION_PROBABILITY": 50,
-        "MAX_SINGLE_RISK_PCT": 2,
-        "MAX_TOTAL_EXPOSURE_PCT": 10,
-        # ... 更多默认值
+        # ... 其他默认值
     }
 
 

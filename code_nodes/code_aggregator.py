@@ -384,26 +384,22 @@ def get_target_dict(data: dict) -> dict:
     """
     targets = data.get("targets")
     
-    # 情况 1: None 或缺失
-    if targets is None:
-        print("⚠️ 警告: targets 字段缺失")
-        return {}
-    
-    # 情况 2: 空列表
-    if isinstance(targets, list):
-        if not targets:  # 空列表
-            print("⚠️ 警告: targets 是空列表")
-            return {}
-        return targets[0]
-    
-    # 情况 3: 字典
-    if isinstance(targets, dict):
-        if not targets:  # 空字典
-            print("⚠️ 警告: targets 是空字典")
+    # 优先级1: 直接是字典
+    if isinstance(targets, dict) and targets:
         return targets
     
-    # 情况 4: 其他类型(异常)
-    print(f"❌ 错误: targets 类型异常 - {type(targets)}")
+    # 优先级2: 非空列表
+    if isinstance(targets, list) and targets:
+        return targets[0] if isinstance(targets[0], dict) else {}
+    
+    # 优先级3: 回退到根节点（兼容旧格式）
+    # 如果data本身包含spot_price等字段，说明targets就是根节点
+    if "spot_price" in data or "symbol" in data:
+        logger.warning("⚠️ targets字段缺失，尝试从根节点读取")
+        return data
+    
+    # 无法识别
+    logger.error(f"❌ 无法提取targets，类型: {type(targets)}")
     return {}
 
 

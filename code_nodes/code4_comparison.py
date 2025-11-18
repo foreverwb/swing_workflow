@@ -1,6 +1,7 @@
 
 import json
 from typing import Dict, List, Tuple
+from datetime import datetime
 
 def calculate_ev(pw: float, max_profit: float, max_loss: float) -> float:
     """计算期望值"""
@@ -212,7 +213,7 @@ def main(strategies_output: dict, scenario_output: dict,
             # 完整排序列表（序列化为 JSON 字符串）
             "ranking_json": json.dumps(ranked, ensure_ascii=False)
         }
-        return result
+        return { "result": json.dumps(result, ensure_ascii=False, indent=2) }
         
     except Exception as e:
         return {"result": {
