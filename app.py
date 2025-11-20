@@ -261,6 +261,25 @@ def analyze(symbol: str, folder: str, config: str, output: str):
     # 运行分析
     console.print(f"\n[green]🚀 开始分析 {symbol.upper()}[/green]\n")
     
+    # 创建工作流引擎
+    engine = WorkflowEngine(model_client, env_vars)
+    
+    # 运行分析
+    console.print(f"\n[green]🚀 开始分析 {symbol.upper()}[/green]\n")
+    
+    # [新增] 简单的文件夹检查
+    folder_path = Path(folder)
+    if not folder_path.exists():
+        console.print(f"[red]❌ 错误: 文件夹不存在 {folder_path}[/red]")
+        sys.exit(1)
+        
+    image_count = len(list(folder_path.glob('*.[pP][nN][gG]'))) + len(list(folder_path.glob('*.[jJ][pP][gG]')))
+    if image_count == 0:
+        console.print(f"[red]❌ 错误: 文件夹 {folder_path} 中没有找到图片 (png/jpg)[/red]")
+        sys.exit(1)
+
+    console.print(f"[dim]📂 扫描到 {image_count} 张图片，准备开始分析...[/dim]")
+    
     try:
         with Progress(
             SpinnerColumn(),

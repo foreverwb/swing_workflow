@@ -389,42 +389,49 @@ def get_user_prompt(symbol: str, files: list) -> str:
         symbol: 股票代码
         files: 上传的文件列表
     """
-    # 生成文件列表描述
+   # 生成文件列表描述
     file_descriptions = []
-    for i, file_path in enumerate(files, 1):
-        file_name = file_path.name if hasattr(file_path, 'name') else str(file_path)
+    for i, file_name in enumerate(files, 1):
         file_descriptions.append(f"{i}. {file_name}")
     
     files_text = "\n".join(file_descriptions) if file_descriptions else "无文件"
     
-    return f"""请解析 {symbol} 的期权数据
+    return f"""请解析 {symbol} 的期权数据 (分批处理中)
 
-【上传文件列表】
+【当前批次文件列表】
 {files_text}
 
-【解析任务】
-1. 识别每张图表的类型 (gexr/trigger/dexn/vanna/skew/term/iv_path等)
-2. 提取所有可见的数值数据
-3. 计算衍生指标 (EM1$, gap_distance等)
-4. 执行三级验证
-5. 如有缺失,生成补齐指引
+【任务说明】
+这是大型分析任务的一部分。请专注于提取当前上传图片中包含的所有有效数据。
+1. 如果图片包含 GEX 墙数据，请提取 walls 相关字段。
+2. 如果图片包含 IV 数据，请提取 atm_iv 相关字段。
+3. 如果某字段在当前图片中不可见，请务必返回 Schema 定义的默认无效值（如 -999 或 "N/A"），**绝对不要编造数据**。
 
-【数据源识别参考】
-- `!gexr` 图表 → walls, cluster_strength
-- `!trigger` 图表 → vol_trigger, spot_vs_trigger
-- `!gexn` 图表 → net_gex, net_gex_sign
-- `!dexn` 图表 → dex_same_dir_pct
-- `!vanna` 图表 → vanna_dir, vanna_confidence
-- `!skew` 图表 → atm_iv (iv_7d, iv_14d)
-- `!term` 图表 → IV期限结构
-- `iv_path_*.png` 时间序列 → iv_path, iv_path_confidence
-- K线图 → 技术面指标 (可选)
+请严格按照 JSON Schema 输出 Targets 对象。"""
 
-【输出要求】
-1. 严格按照 JSON Schema 格式输出
-2. **targets 字段必须是字典**, 不能是空列表
-3. 无法识别的字段使用占位值 (-999 / "N/A" / "数据不足")
-4. 只解析当前上传的图表,不要尝试"记忆"之前的数据
-5. 如包含 iv_path 时间序列图,必须填充 `iv_path_details` 对象
+# 【解析任务】
+# 1. 识别每张图表的类型 (gexr/trigger/dexn/vanna/skew/term/iv_path等)
+# 2. 提取所有可见的数值数据
+# 3. 计算衍生指标 (EM1$, gap_distance等)
+# 4. 执行三级验证
+# 5. 如有缺失,生成补齐指引
 
-开始解析!"""
+# 【数据源识别参考】
+# - `!gexr` 图表 → walls, cluster_strength
+# - `!trigger` 图表 → vol_trigger, spot_vs_trigger
+# - `!gexn` 图表 → net_gex, net_gex_sign
+# - `!dexn` 图表 → dex_same_dir_pct
+# - `!vanna` 图表 → vanna_dir, vanna_confidence
+# - `!skew` 图表 → atm_iv (iv_7d, iv_14d)
+# - `!term` 图表 → IV期限结构
+# - `iv_path_*.png` 时间序列 → iv_path, iv_path_confidence
+# - K线图 → 技术面指标 (可选)
+
+# 【输出要求】
+# 1. 严格按照 JSON Schema 格式输出
+# 2. **targets 字段必须是字典**, 不能是空列表
+# 3. 无法识别的字段使用占位值 (-999 / "N/A" / "数据不足")
+# 4. 只解析当前上传的图表,不要尝试"记忆"之前的数据
+# 5. 如包含 iv_path 时间序列图,必须填充 `iv_path_details` 对象
+
+# 开始解析!"""

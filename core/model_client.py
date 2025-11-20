@@ -1,20 +1,12 @@
 """
 模型客户端封装
-支持多模型编排：每个 Agent 可以使用不同的模型
+仅支持 OpenAI 兼容接口（包括 Responses API）
 """
 
 import os
 import json
-import base64
-from pathlib import Path
-from typing import Dict, Any, List, Optional, Union
+from typing import Dict, Any, List, Optional
 from loguru import logger
-
-try:
-    from anthropic import Anthropic
-    ANTHROPIC_AVAILABLE = True
-except ImportError:
-    ANTHROPIC_AVAILABLE = False
 
 try:
     from openai import OpenAI
@@ -23,8 +15,8 @@ except ImportError:
     OPENAI_AVAILABLE = False
 
 
-class BaseModelClient:
-    """模型客户端基类"""
+class ModelClient:
+    """OpenAI 兼容模型客户端"""
     
     def __init__(self, config: Dict[str, Any]):
         """
@@ -33,8 +25,11 @@ class BaseModelClient:
         Args:
             config: 模型配置字典
         """
+        if not OPENAI_AVAILABLE:
+            raise ImportError("请安装: pip install openai")
+        
         self.config = config
-        self.provider = config.get('provider', 'dmxapi')
+        self.provider = config.get('provider', 'openai')
         self.model = config.get('model', 'gpt-4o')
         self.api_key = config.get('api_key') or self._get_api_key_from_env()
         self.base_url = config.get('base_url')
@@ -44,158 +39,9 @@ class BaseModelClient:
         self.supports_vision = config.get('supports_vision', False)
         
         if not self.api_key:
-            raise ValueError(f"未找到 API Key，请配置或设置环境变量")
-    
-    def _get_api_key_from_env(self) -> Optional[str]:
-        """从环境变量获取 API Key"""
-        env_keys = {
-            'anthropic': 'ANTHROPIC_API_KEY',
-            'openai': 'OPENAI_API_KEY',
-            'dmxapi': 'DMXAPI_KEY'
-        }
-        env_var = env_keys.get(self.provider)
-        if env_var:
-            return os.environ.get(env_var)
-        return None
-    
-    def chat_completion(
-        self,
-        messages: List[Dict[str, Any]],
-        temperature: Optional[float] = None,
-        max_tokens: Optional[int] = None,
-        **kwargs
-    ) -> Dict[str, Any]:
-        """聊天补全（子类实现）"""
-        raise NotImplementedError
-    
-    def create_image_message(
-        self,
-        text: str,
-        image_paths: List[Union[str, Path]]
-    ) -> Dict[str, Any]:
-        """创建包含图片的消息（子类实现）"""
-        raise NotImplementedError
-
-
-class AnthropicClient(BaseModelClient):
-    """Anthropic Claude 客户端"""
-    
-    def __init__(self, config: Dict[str, Any]):
-        super().__init__(config)
+            raise ValueError(f"未找到 API Key，请配置或设置环境变量 OPENAI_API_KEY 或 DMXAPI_KEY")
         
-        if not ANTHROPIC_AVAILABLE:
-            raise ImportError("请安装: pip install anthropic")
-        
-        client_kwargs = {'api_key': self.api_key}
-        if self.base_url:
-            client_kwargs['base_url'] = self.base_url
-        
-        self.client = Anthropic(**client_kwargs)
-        logger.debug(f"Anthropic 客户端初始化: {self.model}")
-    
-    def chat_completion(
-        self,
-        messages: List[Dict[str, Any]],
-        temperature: Optional[float] = None,
-        max_tokens: Optional[int] = None,
-        **kwargs
-    ) -> Dict[str, Any]:
-        """Claude 聊天补全"""
-        
-        # 分离 system 消息
-        system_content = None
-        conversation = []
-        for msg in messages:
-            if msg["role"] == "system":
-                system_content = msg["content"]
-            else:
-                conversation.append(msg)
-        
-        request_params = {
-            "model": self.model,
-            "messages": conversation,
-            "max_tokens": max_tokens or self.max_tokens,
-            "temperature": temperature if temperature is not None else self.temperature
-        }
-        
-        if system_content:
-            request_params["system"] = system_content
-        
-        # JSON Schema 支持
-        if kwargs.get('json_schema'):
-            request_params["response_format"] = {
-                "type": "json_schema",
-                "json_schema": kwargs['json_schema']
-            }
-        
-        try:
-            response = self.client.messages.create(**request_params)
-            content = response.content[0].text if response.content else ""
-            
-            # JSON 解析
-            if kwargs.get('json_schema') and content:
-                try:
-                    content = json.loads(content)
-                except json.JSONDecodeError:
-                    logger.warning("JSON解析失败")
-            
-            return {
-                "content": content,
-                "usage": {
-                    "input_tokens": response.usage.input_tokens,
-                    "output_tokens": response.usage.output_tokens
-                },
-                "model": response.model
-            }
-        
-        except Exception as e:
-            logger.error(f"Claude API 调用失败: {str(e)}")
-            raise
-    
-    def create_image_message(
-        self,
-        text: str,
-        image_paths: List[Union[str, Path]]
-    ) -> Dict[str, Any]:
-        """创建包含图片的消息（Anthropic 格式）"""
-        content = []
-        
-        for img_path in image_paths:
-            img_path = Path(img_path)
-            if not img_path.exists():
-                continue
-            
-            with open(img_path, 'rb') as f:
-                image_data = base64.b64encode(f.read()).decode('utf-8')
-            
-            media_type = f"image/{img_path.suffix[1:]}"
-            if img_path.suffix.lower() == '.jpg':
-                media_type = "image/jpeg"
-            
-            content.append({
-                "type": "image",
-                "source": {
-                    "type": "base64",
-                    "media_type": media_type,
-                    "data": image_data
-                }
-            })
-        
-        if text:
-            content.append({"type": "text", "text": text})
-        
-        return {"role": "user", "content": content}
-
-
-class OpenAICompatibleClient(BaseModelClient):
-    """OpenAI 兼容客户端"""
-    
-    def __init__(self, config: Dict[str, Any]):
-        super().__init__(config)
-        
-        if not OPENAI_AVAILABLE:
-            raise ImportError("请安装: pip install openai")
-        
+        # 初始化 OpenAI 客户端
         client_kwargs = {'api_key': self.api_key}
         if self.base_url:
             client_kwargs['base_url'] = self.base_url
@@ -205,15 +51,30 @@ class OpenAICompatibleClient(BaseModelClient):
         self.client = OpenAI(**client_kwargs)
         logger.debug(f"{self.provider.upper()} 客户端初始化: {self.model}")
     
+    def _get_api_key_from_env(self) -> Optional[str]:
+        """从环境变量获取 API Key"""
+        return os.environ.get('OPENAI_API_KEY') or os.environ.get('DMXAPI_KEY')
+    
     def chat_completion(
         self,
         messages: List[Dict[str, Any]],
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
+        json_schema: Optional[Dict] = None,
         **kwargs
     ) -> Dict[str, Any]:
-        """OpenAI 兼容接口聊天补全"""
+        """
+        聊天补全接口
         
+        Args:
+            messages: 消息列表
+            temperature: 温度
+            max_tokens: 最大token数
+            json_schema: JSON Schema（用于结构化输出）
+            
+        Returns:
+            响应字典
+        """
         request_params = {
             "model": self.model,
             "messages": messages,
@@ -221,7 +82,7 @@ class OpenAICompatibleClient(BaseModelClient):
             "temperature": temperature if temperature is not None else self.temperature
         }
         
-        if kwargs.get('json_schema'):
+        if json_schema:
             request_params["response_format"] = {"type": "json_object"}
         
         try:
@@ -229,11 +90,11 @@ class OpenAICompatibleClient(BaseModelClient):
             content = response.choices[0].message.content
             
             # JSON 解析
-            if kwargs.get('json_schema') and content:
+            if json_schema and content:
                 try:
                     content = json.loads(content)
                 except json.JSONDecodeError:
-                    logger.warning("JSON解析失败")
+                    logger.warning("JSON解析失败，返回原始文本")
             
             return {
                 "content": content,
@@ -245,37 +106,79 @@ class OpenAICompatibleClient(BaseModelClient):
             }
         
         except Exception as e:
-            logger.error(f"{self.provider.upper()} API 调用失败: {str(e)}")
+            logger.error(f"API 调用失败: {str(e)}")
             raise
     
-    def create_image_message(
+    # 在 ModelClient 类中找到 responses_create 方法并替换为以下内容
+    
+    def responses_create(
         self,
-        text: str,
-        image_paths: List[Union[str, Path]]
+        inputs: List[Dict[str, Any]],
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+        json_schema: Optional[Dict] = None,
+        **kwargs
     ) -> Dict[str, Any]:
-        """创建包含图片的消息（OpenAI Vision 格式）"""
-        content = [{"type": "text", "text": text}]
+        """
+        OpenAI Responses API 接口适配器
+        修正：将 Responses 调用重定向到标准的 Chat Completions 接口 (Vision 支持)
         
-        for img_path in image_paths:
-            img_path = Path(img_path)
-            if not img_path.exists():
-                continue
+        Args:
+            inputs: 输入列表（在 Agent3 中，这实际上是 messages 列表）
+            temperature: 温度
+            max_tokens: 最大token数
+            json_schema: JSON Schema
             
-            with open(img_path, 'rb') as f:
-                image_data = base64.b64encode(f.read()).decode('utf-8')
+        Returns:
+            响应字典
+        """
+        # Qwen-VL 和大多数视觉模型使用标准的 chat.completions 接口
+        # 日志显示 inputs 已经是 [{'role': 'system', ...}] 格式，直接映射为 messages
+        request_params = {
+            "model": self.model,
+            "messages": inputs, # 将 inputs 重命名为 messages
+            "max_tokens": max_tokens or self.max_tokens,
+            "temperature": temperature if temperature is not None else self.temperature
+        }
+
+        # 某些 Vision 模型对 stream 或 response_format 支持有限，这里保持简单
+        if json_schema:
+            request_params["response_format"] = {"type": "json_object"}
+
+        try:
+            logger.debug(f"调用 Chat Completions (Vision): model={self.model}, messages={len(inputs)} 条")
             
-            media_type = img_path.suffix[1:].lower()
-            if media_type == 'jpg':
-                media_type = 'jpeg'
+            # 使用标准的 chat.completions.create 替代 responses.create
+            response = self.client.chat.completions.create(**request_params)
             
-            content.append({
-                "type": "image_url",
-                "image_url": {
-                    "url": f"data:image/{media_type};base64,{image_data}"
-                }
-            })
+            # 适配返回格式
+            content = response.choices[0].message.content
+            
+            # JSON 解析逻辑保持不变
+            if json_schema and content:
+                try:
+                    import re
+                    json_match = re.search(r'```json\s*(.*?)\s*```', content, re.DOTALL)
+                    if json_match:
+                        content = json.loads(json_match.group(1))
+                    else:
+                        content = json.loads(content)
+                    logger.debug("✅ JSON 解析成功")
+                except json.JSONDecodeError as e:
+                    logger.warning(f"⚠️ JSON 解析失败: {str(e)[:100]}，返回原始文本")
+            
+            return {
+                "content": content,
+                "usage": {
+                    "input_tokens": response.usage.prompt_tokens,
+                    "output_tokens": response.usage.completion_tokens
+                },
+                "model": response.model
+            }
         
-        return {"role": "user", "content": content}
+        except Exception as e:
+            logger.error(f"Vision API 调用失败: {str(e)}")
+            raise
 
 
 class ModelClientManager:
@@ -294,7 +197,7 @@ class ModelClientManager:
         import yaml
         from pathlib import Path
         
-        # 直接加载 YAML 配置
+        # 加载 YAML 配置
         config_file = Path(config_path)
         if not config_file.exists():
             raise FileNotFoundError(f"模型配置文件不存在: {config_path}")
@@ -316,18 +219,7 @@ class ModelClientManager:
         merged.update(agent_config)
         return merged
     
-    def _create_client(self, config: Dict[str, Any]) -> BaseModelClient:
-        """根据配置创建客户端"""
-        provider = config.get('provider', 'dmxapi').lower()
-        
-        if provider == 'anthropic':
-            return AnthropicClient(config)
-        elif provider in ['openai', 'dmxapi']:
-            return OpenAICompatibleClient(config)
-        else:
-            raise ValueError(f"不支持的提供商: {provider}")
-    
-    def get_client(self, agent_name: str = "default") -> BaseModelClient:
+    def get_client(self, agent_name: str = "default") -> ModelClient:
         """
         获取指定 Agent 的客户端
         
@@ -349,7 +241,7 @@ class ModelClientManager:
             full_config = self.default_config
         
         # 创建客户端
-        client = self._create_client(full_config)
+        client = ModelClient(full_config)
         
         # 缓存
         self._clients_cache[agent_name] = client
@@ -407,29 +299,51 @@ class ModelClientManager:
         
         return result
     
-    def create_image_message(
+    def responses_create(
         self,
-        text: str,
-        image_paths: List[Union[str, Path]],
-        agent_name: str = "agent3"
+        inputs: List[Dict[str, Any]],
+        agent_name: str = "agent3",
+        json_schema: Optional[Dict] = None,
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+        **kwargs
     ) -> Dict[str, Any]:
         """
-        创建包含图片的消息
+        OpenAI Responses API 接口（用于 Agent3 多图片输入）
         
         Args:
-            text: 文本内容
-            image_paths: 图片路径列表
-            agent_name: Agent名称（默认agent3，因为它需要视觉）
+            inputs: 输入列表
+            agent_name: Agent名称
+            json_schema: JSON Schema
+            temperature: 温度
+            max_tokens: 最大token数
             
         Returns:
-            消息字典
+            响应字典
         """
         client = self.get_client(agent_name)
         
-        if not client.supports_vision:
-            logger.warning(f"[{agent_name}] 模型不支持视觉，但仍尝试发送图片")
+        logger.info(f"[{agent_name}] 调用 Responses API: {client.provider}/{client.model}")
         
-        return client.create_image_message(text, image_paths)
+        result = client.responses_create(
+            inputs=inputs,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            json_schema=json_schema,
+            **kwargs
+        )
+        
+        # 添加 Agent 信息
+        result['agent_name'] = agent_name
+        result['provider'] = client.provider
+        
+        logger.success(
+            f"[{agent_name}] ✓ Responses API 完成 "
+            f"(输入:{result['usage']['input_tokens']} "
+            f"输出:{result['usage']['output_tokens']})"
+        )
+        
+        return result
     
     def get_model_info(self, agent_name: str = "default") -> Dict[str, Any]:
         """获取指定 Agent 的模型信息"""
@@ -450,7 +364,7 @@ class ModelClientManager:
 
 # 工厂函数（向后兼容）
 class ModelClientFactory:
-    """模型客户端工厂（向后兼容接口）"""
+    """模型客户端工厂"""
     
     @staticmethod
     def create_from_config(config_path: str = "config/model_config.yaml") -> ModelClientManager:

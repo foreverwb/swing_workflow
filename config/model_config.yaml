@@ -5,9 +5,9 @@
 
 # === 默认模型配置（全局） ===
 default:
-  provider: dmxapi               # 默认提供商
+  provider: openai               # 默认提供商
   model: deepseek-v3.2-exp-thinking                  # 默认模型
-  api_key: ""                    # 从环境变量 DMXAPI_KEY 读取
+  api_key: "sk-32uJrs709ULv8u5XLRRENg8ItFQSjGFfW4jsF7KXLFDtcBxq"                    # 从环境变量 DMXAPI_KEY 读取
   base_url: "https://www.dmxapi.cn/v1"
   temperature: 0.3
   max_tokens: 4096
@@ -19,43 +19,43 @@ default:
 agents:
   # Agent 2: 命令清单生成（简单任务，使用经济模型）
   agent2:
-    provider: dmxapi
+    provider: openai
     model: Qwen3-8B        # 使用小模型节省成本
     temperature: 0.3
     max_tokens: 2048
   
   # Agent 3: 数据校验（需要视觉能力）
   agent3:
-    provider: dmxapi
+    provider: openai
     model: Qwen3-VL-235B-A22B-Thinking                # 需要视觉支持
-    temperature: 0.3
+    temperature: 0.6
     max_tokens: 4096
     supports_vision: true
   
   # Agent 5: 场景分析（复杂推理，使用高级模型）
   agent5:
-    provider: dmxapi
+    provider: openai
     model: deepseek-v3.2-exp-thinking  # 切换到 Claude（推理能力强）
     temperature: 0.5
     max_tokens: 3072
   
   # Agent 6: 策略生成（高级推理）
   agent6:
-    provider: dmxapi
+    provider: openai
     model: deepseek-v3.2-exp-thinking
     temperature: 0.5
     max_tokens: 4096
   
   # Agent 7: 策略排序
   agent7:
-    provider: dmxapi
+    provider: openai
     model: deepseek-v3.2-exp-thinking
     temperature: 0.5
     max_tokens: 3072
   
   # Agent 8: 最终报告（需要优秀的写作能力）
   agent8:
-    provider: dmxapi
+    provider: openai
     model: deepseek-v3.2-exp-thinking  # Claude 写作能力优秀
     temperature: 0.5
     max_tokens: 4096
