@@ -49,12 +49,18 @@ def main(
         }
     """
     try:
-        current_data = agent3_output
+        # ⭐ 新增：规范化数据结构（处理 GPT-4o 的平铺结构）
+        current_data = _normalize_data_structure(agent3_output)
         
         # 🔍 调试日志 1: 检查输入数据
         print(f"📥 输入数据类型: {type(current_data)}")
         print(f"📥 targets 类型: {type(current_data.get('targets'))}")
-        print(f"📥 targets 内容预览: {str(current_data.get('targets'))[:200]}")
+        
+        # 检查 targets 是否已经是嵌套结构
+        targets = current_data.get('targets', {})
+        if isinstance(targets, dict):
+            has_nested = any(k in targets for k in ["gamma_metrics", "directional_metrics", "atm_iv", "walls"])
+            print(f"📥 数据结构: {'嵌套结构' if has_nested else '平铺结构（已规范化）'}")
         
         symbol = extract_symbol(current_data)
         current_status = current_data.get("status", "missing_data")
@@ -198,6 +204,79 @@ def main(
             "user_guide_next_action": "请检查数据后重试",
             "user_guide_merge_log": ""
         }
+
+
+# ============= ⭐ 新增：数据结构规范化 =============
+
+def _normalize_data_structure(data: dict) -> dict:
+    """
+    将平铺结构的数据转换为标准嵌套结构
+    
+    处理 GPT-4o 等模型返回的不符合 Schema 的平铺结构数据
+    
+    Args:
+        data: 原始数据（可能是平铺或嵌套结构）
+        
+    Returns:
+        标准嵌套结构的数据
+    """
+    targets = data.get("targets", {})
+    
+    # 检查是否已经是嵌套结构
+    has_nested = any(k in targets for k in ["gamma_metrics", "directional_metrics", "atm_iv", "walls"])
+    
+    if has_nested:
+        return data  # 已经是标准结构，无需转换
+    
+    # 转换平铺结构为嵌套结构
+    normalized_targets = {
+        "symbol": targets.get("symbol", "UNKNOWN"),
+        "status": targets.get("status", "missing_data"),
+        "spot_price": targets.get("spot_price", -999),
+        "em1_dollar": targets.get("em1_dollar", -999),
+        
+        "walls": {
+            "call_wall": targets.get("call_wall", -999),
+            "put_wall": targets.get("put_wall", -999),
+            "major_wall": targets.get("major_wall", -999),
+            "major_wall_type": targets.get("major_wall_type", "N/A")
+        },
+        
+        "gamma_metrics": {
+            "gap_distance_dollar": targets.get("gap_distance_dollar", -999),
+            "gap_distance_em1_multiple": targets.get("gap_distance_em1_multiple", -999),
+            "cluster_strength_ratio": targets.get("cluster_strength_ratio", -999),
+            "net_gex": targets.get("net_gex", -999),
+            "net_gex_sign": targets.get("net_gex_sign", "N/A"),
+            "vol_trigger": targets.get("vol_trigger", -999),
+            "spot_vs_trigger": targets.get("spot_vs_trigger", "N/A"),
+            "monthly_cluster_override": targets.get("monthly_cluster_override", "false")
+        },
+        
+        "directional_metrics": {
+            "dex_same_dir_pct": targets.get("dex_same_dir_pct", -999),
+            "vanna_dir": targets.get("vanna_dir", "N/A"),
+            "vanna_confidence": targets.get("vanna_confidence", "N/A"),
+            "iv_path": targets.get("iv_path", "数据不足"),
+            "iv_path_confidence": targets.get("iv_path_confidence", "low")
+        },
+        
+        "atm_iv": {
+            "iv_7d": targets.get("iv_7d", -999),
+            "iv_14d": targets.get("iv_14d", -999),
+            "iv_source": targets.get("iv_source", "N/A")
+        }
+    }
+    
+    # 保留其他可选字段
+    for key in ["validation_summary", "indices", "technical_analysis", "chart_metadata", "missing_fields", "补齐指引"]:
+        if key in targets:
+            normalized_targets[key] = targets[key]
+    
+    return {
+        **data,
+        "targets": normalized_targets
+    }
 
 
 # ============= 核心函数 1: 智能判断累积模式 =============
@@ -347,20 +426,54 @@ def smart_merge(first_data: dict, new_data: dict) -> Tuple[dict, dict]:
 # ============= 辅助函数 =============
 
 def count_valid_fields_in_dict(target_dict: dict) -> int:
-    """统计字典中的有效字段数量"""
+    """
+    统计字典中的有效字段数量（增强版）
+    
+    支持两种数据结构：
+    1. 标准嵌套结构（Schema 规定）
+    2. 平铺结构（部分模型返回）
+    """
     count = 0
     
+    # === 尝试标准嵌套结构 ===
+    nested_count = 0
     for section in ["gamma_metrics", "directional_metrics", "atm_iv", "walls"]:
         if section in target_dict and isinstance(target_dict[section], dict):
             for value in target_dict[section].values():
                 if is_valid_value(value):
-                    count += 1
+                    nested_count += 1
     
+    # 检查顶层必需字段
     for key in ["spot_price", "em1_dollar"]:
         if is_valid_value(target_dict.get(key)):
-            count += 1
+            nested_count += 1
     
-    return count
+    # === 如果嵌套结构存在，使用嵌套计数 ===
+    if nested_count > 0:
+        return nested_count
+    
+    # === 否则尝试平铺结构 ===
+    flat_required_fields = [
+        "spot_price", "em1_dollar",
+        # walls
+        "call_wall", "put_wall", "major_wall", "major_wall_type",
+        # gamma_metrics
+        "gap_distance_dollar", "gap_distance_em1_multiple", 
+        "cluster_strength_ratio", "net_gex", "net_gex_sign",
+        "vol_trigger", "spot_vs_trigger", "monthly_cluster_override",
+        # directional_metrics
+        "dex_same_dir_pct", "vanna_dir", "vanna_confidence",
+        "iv_path", "iv_path_confidence",
+        # atm_iv
+        "iv_7d", "iv_14d", "iv_source"
+    ]
+    
+    flat_count = 0
+    for field in flat_required_fields:
+        if is_valid_value(target_dict.get(field)):
+            flat_count += 1
+    
+    return flat_count
 
 
 def is_valid_value(value: Any) -> bool:
@@ -396,17 +509,17 @@ def get_target_dict(data: dict) -> dict:
     # 优先级3: 回退到根节点（兼容旧格式）
     # 如果data本身包含spot_price等字段，说明targets就是根节点
     if "spot_price" in data or "symbol" in data:
-        logger.warning("⚠️ targets字段缺失，尝试从根节点读取")
+        print("⚠️ targets字段缺失，尝试从根节点读取")
         return data
     
     # 无法识别
-    logger.error(f"❌ 无法提取targets，类型: {type(targets)}")
+    print(f"❌ 无法提取targets，类型: {type(targets)}")
     return {}
 
 
 def enhanced_validation_v2(data: dict) -> dict:
     """
-    三级验证增强版(基于合并后的数据)
+    三级验证增强版(支持平铺和嵌套结构)
     
     Returns:
         {
@@ -417,40 +530,70 @@ def enhanced_validation_v2(data: dict) -> dict:
     """
     target = get_target_dict(data)
     
-    # 22 个必需字段
-    required_fields = {
-        # 顶层字段
-        "spot_price": (target, "spot_price"),
-        "em1_dollar": (target, "em1_dollar"),
-        
-        # walls
-        "walls.call_wall": (target.get("walls", {}), "call_wall"),
-        "walls.put_wall": (target.get("walls", {}), "put_wall"),
-        "walls.major_wall": (target.get("walls", {}), "major_wall"),
-        "walls.major_wall_type": (target.get("walls", {}), "major_wall_type"),
-        
-        # gamma_metrics
-        "gamma_metrics.gap_distance_dollar": (target.get("gamma_metrics", {}), "gap_distance_dollar"),
-        "gamma_metrics.gap_distance_em1_multiple": (target.get("gamma_metrics", {}), "gap_distance_em1_multiple"),
-        "gamma_metrics.cluster_strength_ratio": (target.get("gamma_metrics", {}), "cluster_strength_ratio"),
-        "gamma_metrics.net_gex": (target.get("gamma_metrics", {}), "net_gex"),
-        "gamma_metrics.net_gex_sign": (target.get("gamma_metrics", {}), "net_gex_sign"),
-        "gamma_metrics.vol_trigger": (target.get("gamma_metrics", {}), "vol_trigger"),
-        "gamma_metrics.spot_vs_trigger": (target.get("gamma_metrics", {}), "spot_vs_trigger"),
-        "gamma_metrics.monthly_cluster_override": (target.get("gamma_metrics", {}), "monthly_cluster_override"),
-        
-        # directional_metrics
-        "directional_metrics.dex_same_dir_pct": (target.get("directional_metrics", {}), "dex_same_dir_pct"),
-        "directional_metrics.vanna_dir": (target.get("directional_metrics", {}), "vanna_dir"),
-        "directional_metrics.vanna_confidence": (target.get("directional_metrics", {}), "vanna_confidence"),
-        "directional_metrics.iv_path": (target.get("directional_metrics", {}), "iv_path"),
-        "directional_metrics.iv_path_confidence": (target.get("directional_metrics", {}), "iv_path_confidence"),
-        
-        # atm_iv
-        "atm_iv.iv_7d": (target.get("atm_iv", {}), "iv_7d"),
-        "atm_iv.iv_14d": (target.get("atm_iv", {}), "iv_14d"),
-        "atm_iv.iv_source": (target.get("atm_iv", {}), "iv_source"),
-    }
+    # ⭐ 检测数据结构类型
+    is_nested = any(k in target for k in ["gamma_metrics", "directional_metrics", "atm_iv", "walls"])
+    
+    if is_nested:
+        # === 标准嵌套结构验证 ===
+        required_fields = {
+            # 顶层字段
+            "spot_price": (target, "spot_price"),
+            "em1_dollar": (target, "em1_dollar"),
+            
+            # walls
+            "walls.call_wall": (target.get("walls", {}), "call_wall"),
+            "walls.put_wall": (target.get("walls", {}), "put_wall"),
+            "walls.major_wall": (target.get("walls", {}), "major_wall"),
+            "walls.major_wall_type": (target.get("walls", {}), "major_wall_type"),
+            
+            # gamma_metrics
+            "gamma_metrics.gap_distance_dollar": (target.get("gamma_metrics", {}), "gap_distance_dollar"),
+            "gamma_metrics.gap_distance_em1_multiple": (target.get("gamma_metrics", {}), "gap_distance_em1_multiple"),
+            "gamma_metrics.cluster_strength_ratio": (target.get("gamma_metrics", {}), "cluster_strength_ratio"),
+            "gamma_metrics.net_gex": (target.get("gamma_metrics", {}), "net_gex"),
+            "gamma_metrics.net_gex_sign": (target.get("gamma_metrics", {}), "net_gex_sign"),
+            "gamma_metrics.vol_trigger": (target.get("gamma_metrics", {}), "vol_trigger"),
+            "gamma_metrics.spot_vs_trigger": (target.get("gamma_metrics", {}), "spot_vs_trigger"),
+            "gamma_metrics.monthly_cluster_override": (target.get("gamma_metrics", {}), "monthly_cluster_override"),
+            
+            # directional_metrics
+            "directional_metrics.dex_same_dir_pct": (target.get("directional_metrics", {}), "dex_same_dir_pct"),
+            "directional_metrics.vanna_dir": (target.get("directional_metrics", {}), "vanna_dir"),
+            "directional_metrics.vanna_confidence": (target.get("directional_metrics", {}), "vanna_confidence"),
+            "directional_metrics.iv_path": (target.get("directional_metrics", {}), "iv_path"),
+            "directional_metrics.iv_path_confidence": (target.get("directional_metrics", {}), "iv_path_confidence"),
+            
+            # atm_iv
+            "atm_iv.iv_7d": (target.get("atm_iv", {}), "iv_7d"),
+            "atm_iv.iv_14d": (target.get("atm_iv", {}), "iv_14d"),
+            "atm_iv.iv_source": (target.get("atm_iv", {}), "iv_source"),
+        }
+    else:
+        # === ⭐ 平铺结构验证 ===
+        required_fields = {
+            "spot_price": (target, "spot_price"),
+            "em1_dollar": (target, "em1_dollar"),
+            "call_wall": (target, "call_wall"),
+            "put_wall": (target, "put_wall"),
+            "major_wall": (target, "major_wall"),
+            "major_wall_type": (target, "major_wall_type"),
+            "gap_distance_dollar": (target, "gap_distance_dollar"),
+            "gap_distance_em1_multiple": (target, "gap_distance_em1_multiple"),
+            "cluster_strength_ratio": (target, "cluster_strength_ratio"),
+            "net_gex": (target, "net_gex"),
+            "net_gex_sign": (target, "net_gex_sign"),
+            "vol_trigger": (target, "vol_trigger"),
+            "spot_vs_trigger": (target, "spot_vs_trigger"),
+            "monthly_cluster_override": (target, "monthly_cluster_override"),
+            "dex_same_dir_pct": (target, "dex_same_dir_pct"),
+            "vanna_dir": (target, "vanna_dir"),
+            "vanna_confidence": (target, "vanna_confidence"),
+            "iv_path": (target, "iv_path"),
+            "iv_path_confidence": (target, "iv_path_confidence"),
+            "iv_7d": (target, "iv_7d"),
+            "iv_14d": (target, "iv_14d"),
+            "iv_source": (target, "iv_source")
+        }
     
     # 检查缺失字段
     missing_fields = []
@@ -519,7 +662,7 @@ def generate_smart_guide(
     
     # 根据字段路径生成命令建议
     commands = []
-    priority_groups = {"critical": [], "high": [], "medium": []}
+    priority_groups = {"critical":[], "high": [], "medium": []}
     
     for item in missing_fields:
         field_path = item["field"]
@@ -550,36 +693,113 @@ def generate_smart_guide(
 
 def suggest_command(field_path: str, symbol: str) -> dict:
     """根据字段路径建议命令"""
+    # 处理嵌套字段名（如 "gamma_metrics.vol_trigger"）
+    field_name = field_path.split('.')[-1] if '.' in field_path else field_path
+    
     command_map = {
-        "gamma_metrics.vol_trigger": {
-            "command": "!trigger {symbol} 60",
+        "vol_trigger": {
+            "command": f"!trigger {symbol} 60",
             "description": "Gamma 触发线",
             "priority": "critical"
         },
-        "gamma_metrics.net_gex": {
-            "command": "!gexn {symbol} 60 98",
+        "net_gex": {
+            "command": f"!gexn {symbol} 60 98",
             "description": "净 Gamma 敞口",
             "priority": "critical"
         },
-        "walls.call_wall": {
-            "command": "!gexr {symbol} 25 7w",
+        "net_gex_sign": {
+            "command": f"!gexn {symbol} 60 98",
+            "description": "净 Gamma 符号",
+            "priority": "critical"
+        },
+        "spot_vs_trigger": {
+            "command": f"!trigger {symbol} 60",
+            "description": "现价相对触发线",
+            "priority": "critical"
+        },
+        "call_wall": {
+            "command": f"!gexr {symbol} 25 7w",
             "description": "Call 墙位",
             "priority": "high"
         },
-        "atm_iv.iv_7d": {
-            "command": "!skew {symbol} ivmid atm 7",
+        "put_wall": {
+            "command": f"!gexr {symbol} 25 7w",
+            "description": "Put 墙位",
+            "priority": "high"
+        },
+        "major_wall": {
+            "command": f"!gexr {symbol} 25 7w",
+            "description": "主墙位",
+            "priority": "high"
+        },
+        "major_wall_type": {
+            "command": f"!gexr {symbol} 25 7w",
+            "description": "主墙类型",
+            "priority": "high"
+        },
+        "gap_distance_dollar": {
+            "command": f"!gexr {symbol} 25 7w",
+            "description": "跳墙距离（美元）",
+            "priority": "high"
+        },
+        "gap_distance_em1_multiple": {
+            "command": f"!gexr {symbol} 25 7w",
+            "description": "跳墙距离（EM1倍数）",
+            "priority": "high"
+        },
+        "cluster_strength_ratio": {
+            "command": f"!gexr {symbol} 25 7w",
+            "description": "簇强度比",
+            "priority": "medium"
+        },
+        "monthly_cluster_override": {
+            "command": f"!gexr {symbol} 25 30m",
+            "description": "月度簇占优",
+            "priority": "medium"
+        },
+        "iv_7d": {
+            "command": f"!skew {symbol} ivmid atm 7",
             "description": "7日 ATM 波动率",
             "priority": "high"
         },
-        "directional_metrics.dex_same_dir_pct": {
-            "command": "!dexn {symbol} 25 14w",
+        "iv_14d": {
+            "command": f"!skew {symbol} ivmid atm 14",
+            "description": "14日 ATM 波动率",
+            "priority": "high"
+        },
+        "iv_source": {
+            "command": f"!skew {symbol} ivmid atm 7",
+            "description": "IV 数据源",
+            "priority": "high"
+        },
+        "dex_same_dir_pct": {
+            "command": f"!dexn {symbol} 25 14w",
             "description": "DEX 方向一致性",
             "priority": "medium"
         },
-        # ... 更多映射
+        "vanna_dir": {
+            "command": f"!vanna {symbol} ntm 60 m",
+            "description": "Vanna 方向",
+            "priority": "medium"
+        },
+        "vanna_confidence": {
+            "command": f"!vanna {symbol} ntm 60 m",
+            "description": "Vanna 置信度",
+            "priority": "medium"
+        },
+        "iv_path": {
+            "command": f"!term {symbol} 60",
+            "description": "IV 路径趋势",
+            "priority": "medium"
+        },
+        "iv_path_confidence": {
+            "command": f"!term {symbol} 60",
+            "description": "IV 路径置信度",
+            "priority": "medium"
+        }
     }
     
-    return command_map.get(field_path, {
+    return command_map.get(field_name, {
         "command": f"!gexr {symbol} 25 7w",  # 默认命令
         "description": field_path,
         "priority": "medium"
@@ -625,16 +845,4 @@ def extract_symbol(data: dict) -> str:
 def count_valid_fields(data: dict) -> int:
     """统计有效字段数量"""
     target = get_target_dict(data)
-    count = 0
-    
-    for section in ["gamma_metrics", "directional_metrics", "atm_iv", "walls"]:
-        if section in target and isinstance(target[section], dict):
-            for value in target[section].values():
-                if is_valid_value(value):
-                    count += 1
-    
-    for key in ["spot_price", "em1_dollar"]:
-        if is_valid_value(target.get(key)):
-            count += 1
-    
-    return count
+    return count_valid_fields_in_dict(target)
