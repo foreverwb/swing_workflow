@@ -128,7 +128,7 @@ def main(
             last_merge_failed = False
         
         # === 验证 ===
-        validation_result = enhanced_validation_v2(merged_data)
+        validation_result = enhanced_validation(merged_data)
         
         # 🔍 调试日志 4: 验证结果
         print(f"✅ 验证结果: 完成率 {validation_result['summary']['completion_rate']}%")
@@ -517,110 +517,239 @@ def get_target_dict(data: dict) -> dict:
     return {}
 
 
-def enhanced_validation_v2(data: dict) -> dict:
+# code_nodes/code_aggregator.py
+# 修改 enhanced_validation 函数（第 494 行）
+
+def enhanced_validation(data: dict) -> Dict:
     """
-    三级验证增强版(支持平铺和嵌套结构)
+    三级验证增强版 - 修复版
     
-    Returns:
-        {
-            "is_complete": bool,
-            "missing_fields": list,
-            "summary": dict
-        }
+    核心改进：
+    1. 将必需字段分为【原始提取字段】和【计算字段】
+    2. 验证时仅检查原始字段
+    3. 计算字段（em1_dollar, gap_distance_em1_multiple）允许为 -999
+    4. 由 Calculator 节点负责填充计算字段
+    
+    支持两种数据结构：
+    1. 标准嵌套结构（Schema 规定）
+    2. 平铺结构（部分模型返回）
     """
     target = get_target_dict(data)
     
-    # ⭐ 检测数据结构类型
-    is_nested = any(k in target for k in ["gamma_metrics", "directional_metrics", "atm_iv", "walls"])
+    # ============================================
+    # 🔑 关键改进：定义原始提取字段（不包括计算字段）
+    # ============================================
     
-    if is_nested:
-        # === 标准嵌套结构验证 ===
-        required_fields = {
-            # 顶层字段
-            "spot_price": (target, "spot_price"),
-            "em1_dollar": (target, "em1_dollar"),
-            
-            # walls
-            "walls.call_wall": (target.get("walls", {}), "call_wall"),
-            "walls.put_wall": (target.get("walls", {}), "put_wall"),
-            "walls.major_wall": (target.get("walls", {}), "major_wall"),
-            "walls.major_wall_type": (target.get("walls", {}), "major_wall_type"),
-            
-            # gamma_metrics
-            "gamma_metrics.gap_distance_dollar": (target.get("gamma_metrics", {}), "gap_distance_dollar"),
-            "gamma_metrics.gap_distance_em1_multiple": (target.get("gamma_metrics", {}), "gap_distance_em1_multiple"),
-            "gamma_metrics.cluster_strength_ratio": (target.get("gamma_metrics", {}), "cluster_strength_ratio"),
-            "gamma_metrics.net_gex": (target.get("gamma_metrics", {}), "net_gex"),
-            "gamma_metrics.net_gex_sign": (target.get("gamma_metrics", {}), "net_gex_sign"),
-            "gamma_metrics.vol_trigger": (target.get("gamma_metrics", {}), "vol_trigger"),
-            "gamma_metrics.spot_vs_trigger": (target.get("gamma_metrics", {}), "spot_vs_trigger"),
-            "gamma_metrics.monthly_cluster_override": (target.get("gamma_metrics", {}), "monthly_cluster_override"),
-            
-            # directional_metrics
-            "directional_metrics.dex_same_dir_pct": (target.get("directional_metrics", {}), "dex_same_dir_pct"),
-            "directional_metrics.vanna_dir": (target.get("directional_metrics", {}), "vanna_dir"),
-            "directional_metrics.vanna_confidence": (target.get("directional_metrics", {}), "vanna_confidence"),
-            "directional_metrics.iv_path": (target.get("directional_metrics", {}), "iv_path"),
-            "directional_metrics.iv_path_confidence": (target.get("directional_metrics", {}), "iv_path_confidence"),
-            
-            # atm_iv
-            "atm_iv.iv_7d": (target.get("atm_iv", {}), "iv_7d"),
-            "atm_iv.iv_14d": (target.get("atm_iv", {}), "iv_14d"),
-            "atm_iv.iv_source": (target.get("atm_iv", {}), "iv_source"),
-        }
-    else:
-        # === ⭐ 平铺结构验证 ===
-        required_fields = {
-            "spot_price": (target, "spot_price"),
-            "em1_dollar": (target, "em1_dollar"),
-            "call_wall": (target, "call_wall"),
-            "put_wall": (target, "put_wall"),
-            "major_wall": (target, "major_wall"),
-            "major_wall_type": (target, "major_wall_type"),
-            "gap_distance_dollar": (target, "gap_distance_dollar"),
-            "gap_distance_em1_multiple": (target, "gap_distance_em1_multiple"),
-            "cluster_strength_ratio": (target, "cluster_strength_ratio"),
-            "net_gex": (target, "net_gex"),
-            "net_gex_sign": (target, "net_gex_sign"),
-            "vol_trigger": (target, "vol_trigger"),
-            "spot_vs_trigger": (target, "spot_vs_trigger"),
-            "monthly_cluster_override": (target, "monthly_cluster_override"),
-            "dex_same_dir_pct": (target, "dex_same_dir_pct"),
-            "vanna_dir": (target, "vanna_dir"),
-            "vanna_confidence": (target, "vanna_confidence"),
-            "iv_path": (target, "iv_path"),
-            "iv_path_confidence": (target, "iv_path_confidence"),
-            "iv_7d": (target, "iv_7d"),
-            "iv_14d": (target, "iv_14d"),
-            "iv_source": (target, "iv_source")
-        }
+    raw_required_fields_paths = {
+        # 基础价格数据（原始提取）
+        "spot_price": [
+            (target, "spot_price")
+        ],
+        # ⭐ em1_dollar 移除（由 Calculator 计算）
+        
+        # walls 字段（原始提取）
+        "call_wall": [
+            (target.get("walls", {}), "call_wall"),
+            (target, "call_wall")
+        ],
+        "put_wall": [
+            (target.get("walls", {}), "put_wall"),
+            (target, "put_wall")
+        ],
+        "major_wall": [
+            (target.get("walls", {}), "major_wall"),
+            (target, "major_wall")
+        ],
+        "major_wall_type": [
+            (target.get("walls", {}), "major_wall_type"),
+            (target, "major_wall_type")
+        ],
+        
+        # gamma_metrics 字段（原始提取）
+        "gap_distance_dollar": [
+            (target.get("gamma_metrics", {}), "gap_distance_dollar"),
+            (target, "gap_distance_dollar")
+        ],
+        # ⭐ gap_distance_em1_multiple 移除（由 Calculator 计算）
+        
+        "cluster_strength_ratio": [
+            (target.get("gamma_metrics", {}), "cluster_strength_ratio"),
+            (target, "cluster_strength_ratio")
+        ],
+        "net_gex": [
+            (target.get("gamma_metrics", {}), "net_gex"),
+            (target, "net_gex")
+        ],
+        "net_gex_sign": [
+            (target.get("gamma_metrics", {}), "net_gex_sign"),
+            (target, "net_gex_sign")
+        ],
+        "vol_trigger": [
+            (target.get("gamma_metrics", {}), "vol_trigger"),
+            (target, "vol_trigger")
+        ],
+        "spot_vs_trigger": [
+            (target.get("gamma_metrics", {}), "spot_vs_trigger"),
+            (target, "spot_vs_trigger")
+        ],
+        "monthly_cluster_override": [
+            (target.get("gamma_metrics", {}), "monthly_cluster_override"),
+            (target, "monthly_cluster_override")
+        ],
+        
+        # directional_metrics 字段（原始提取）
+        "dex_same_dir_pct": [
+            (target.get("directional_metrics", {}), "dex_same_dir_pct"),
+            (target, "dex_same_dir_pct")
+        ],
+        "vanna_dir": [
+            (target.get("directional_metrics", {}), "vanna_dir"),
+            (target, "vanna_dir")
+        ],
+        "vanna_confidence": [
+            (target.get("directional_metrics", {}), "vanna_confidence"),
+            (target, "vanna_confidence")
+        ],
+        "iv_path": [
+            (target.get("directional_metrics", {}), "iv_path"),
+            (target, "iv_path")
+        ],
+        "iv_path_confidence": [
+            (target.get("directional_metrics", {}), "iv_path_confidence"),
+            (target, "iv_path_confidence")
+        ],
+        
+        # atm_iv 字段（原始提取）
+        "iv_7d": [
+            (target.get("atm_iv", {}), "iv_7d"),
+            (target, "iv_7d")
+        ],
+        "iv_14d": [
+            (target.get("atm_iv", {}), "iv_14d"),
+            (target, "iv_14d")
+        ],
+        "iv_source": [
+            (target.get("atm_iv", {}), "iv_source"),
+            (target, "iv_source")
+        ]
+    }
     
-    # 检查缺失字段
+    # ============================================
+    # 🔑 计算字段定义（不参与验证，仅用于文档说明）
+    # ============================================
+    
+    calculated_fields_info = {
+        "em1_dollar": "由 Calculator 计算：spot_price × min(iv_7d, iv_14d) × EM1_FACTOR",
+        "gap_distance_em1_multiple": "由 Calculator 计算：gap_distance_dollar ÷ em1_dollar",
+        "em1_dollar_idx": "由 Calculator 计算：indices.*.spot_idx × atm_iv_idx × EM1_FACTOR"
+    }
+    
+    # ============================================
+    # 检查原始字段（仅检查这些字段）
+    # ============================================
+    
     missing_fields = []
-    for field_path, (parent_dict, key) in required_fields.items():
-        value = parent_dict.get(key) if isinstance(parent_dict, dict) else None
-        if not is_valid_value(value):
+    
+    for field_name, paths in raw_required_fields_paths.items():
+        found = False
+        
+        # 尝试所有可能的路径
+        for parent_dict, key in paths:
+            if not isinstance(parent_dict, dict):
+                continue
+            
+            value = parent_dict.get(key)
+            if is_valid_value(value):
+                found = True
+                break
+        
+        # 所有路径都没找到有效值
+        if not found:
+            # 获取当前值用于调试
+            current_value = None
+            for parent_dict, key in paths:
+                if isinstance(parent_dict, dict) and key in parent_dict:
+                    current_value = parent_dict.get(key)
+                    break
+            
             missing_fields.append({
-                "field": field_path,
-                "current_value": value
+                "field": field_name,
+                "current_value": current_value
             })
     
-    total_required = len(required_fields)
+    # ============================================
+    # 计算完成率（仅基于原始字段）
+    # ============================================
+    
+    total_required = len(raw_required_fields_paths)
     provided = total_required - len(missing_fields)
     completion_rate = int((provided / total_required) * 100)
     
     is_complete = len(missing_fields) == 0
     
+    # ============================================
+    # 返回验证结果
+    # ============================================
+    
     return {
         "is_complete": is_complete,
         "missing_fields": missing_fields,
         "summary": {
-            "total_required": total_required,
+            "total_required": total_required,  # 🔑 现在是 20 个（移除了 2 个计算字段）
             "provided": provided,
             "missing_count": len(missing_fields),
             "completion_rate": completion_rate
-        }
+        },
+        "_validation_note": (
+            "验证范围：仅检查原始提取字段（20 个）。"
+            f"计算字段（{', '.join(calculated_fields_info.keys())}）"
+            "由 Calculator 节点负责填充，不影响此验证结果。"
+        )
     }
+
+
+# ============================================
+# 辅助函数（保持不变）
+# ============================================
+
+def is_valid_value(value: Any) -> bool:
+    """判断值是否有效（非缺失值）"""
+    if value is None:
+        return False
+    if value == -999:
+        return False
+    if value in ["N/A", "数据不足", "", "unknown"]:
+        return False
+    return True
+
+
+def get_target_dict(data: dict) -> dict:
+    """
+    提取 targets 字典（增强防御性）
+    
+    返回优先级:
+    1. 如果 targets 是非空字典 → 直接返回
+    2. 如果 targets 是非空列表 → 返回第一个元素
+    3. 如果 targets 为空或缺失 → 返回空字典
+    """
+    targets = data.get("targets")
+    
+    # 优先级1: 直接是字典
+    if isinstance(targets, dict) and targets:
+        return targets
+    
+    # 优先级2: 非空列表
+    if isinstance(targets, list) and targets:
+        return targets[0] if isinstance(targets[0], dict) else {}
+    
+    # 优先级3: 回退到根节点（兼容旧格式）
+    if "spot_price" in data or "symbol" in data:
+        print("⚠️ targets字段缺失，尝试从根节点读取")
+        return data
+    
+    # 无法识别
+    print(f"❌ 无法提取targets，类型: {type(targets)}")
+    return {}
 
 
 def generate_smart_guide(

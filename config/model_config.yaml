@@ -11,7 +11,7 @@ default:
   base_url: "https://www.dmxapi.cn/v1"
   temperature: 0.3
   max_tokens: 4096
-  timeout: 120
+  timeout: 360
 
 # === Agent 特定模型配置 ===
 # 每个 Agent 可以覆盖默认配置，使用不同的模型
@@ -27,9 +27,9 @@ agents:
   # Agent 3: 数据校验（需要视觉能力）
   agent3:
     provider: openai
-    model: Qwen3-VL-235B-A22B-Thinking                # 需要视觉支持
-    temperature: 0.6
-    max_tokens: 4096
+    model: gpt-4o       # 需要视觉支持
+    temperature: 0.3
+    max_tokens: 8192
     supports_vision: true
   
   # Agent 5: 场景分析（复杂推理，使用高级模型）

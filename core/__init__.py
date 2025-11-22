@@ -3,7 +3,7 @@
 工作流引擎、模型客户端
 """
 
-from .workflow_engine import WorkflowEngine
+from .workflow import WorkflowEngine
 from .model_client import (
     ModelClient,
     ModelClientManager,

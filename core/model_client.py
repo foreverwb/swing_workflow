@@ -142,8 +142,27 @@ class ModelClient:
         }
 
         # 某些 Vision 模型对 stream 或 response_format 支持有限，这里保持简单
+        # if json_schema:
+        #     request_params["response_format"] = {"type": "json_object"}
+        
+         # ⭐ 强制设置 JSON 模式（即使模型可能不完全支持）
         if json_schema:
             request_params["response_format"] = {"type": "json_object"}
+            logger.debug(f"✅ 已设置 response_format=json_object")
+        
+        # ⭐ 对于视觉模型，额外在 system prompt 中强调
+        if self.supports_vision and json_schema:
+            # 在第一个 system 消息中添加 JSON 输出强调
+            for msg in inputs:
+                if msg.get("role") == "system":
+                    original_content = msg["content"]
+                    msg["content"] = (
+                        "**CRITICAL: You must respond with ONLY valid JSON. "
+                        "No markdown, no explanations, no code blocks. "
+                        "Just pure JSON starting with { and ending with }.**\n\n"
+                        + original_content
+                    )
+                    break
 
         try:
             logger.debug(f"调用 Chat Completions (Vision): model={self.model}, messages={len(inputs)} 条")
