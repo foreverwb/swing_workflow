@@ -6,8 +6,7 @@
 # === 默认模型配置（全局） ===
 default:
   provider: openai               # 默认提供商
-  model: deepseek-v3.2-exp-thinking                  # 默认模型
-  api_key: "sk-32uJrs709ULv8u5XLRRENg8ItFQSjGFfW4jsF7KXLFDtcBxq"                    # 从环境变量 DMXAPI_KEY 读取
+  model: deepseek-v3.2-exp-thinking                  # 默认模型                # 从环境变量 DMXAPI_KEY 读取
   base_url: "https://www.dmxapi.cn/v1"
   temperature: 0.3
   max_tokens: 4096
@@ -35,28 +34,28 @@ agents:
   # Agent 5: 场景分析（复杂推理，使用高级模型）
   agent5:
     provider: openai
-    model: gpt-5.1 # 切换到 Claude（推理能力强）
+    model: deepseek-v3.2-exp # deepseek-v3.2-exp
     temperature: 0.5
     max_tokens: 4096
   
   # Agent 6: 策略生成（高级推理）
   agent6:
     provider: openai
-    model: deepseek-v3.2-exp-thinking
+    model: deepseek-v3.2-exp
     temperature: 0.5
     max_tokens: 4096
   
   # Agent 7: 策略排序
   agent7:
     provider: openai
-    model: deepseek-v3.2-exp-thinking
+    model: deepseek-v3.2-exp
     temperature: 0.5
     max_tokens: 3072
   
   # Agent 8: 最终报告（需要优秀的写作能力）
   agent8:
     provider: openai
-    model: deepseek-v3.2-exp-thinking  # Claude 写作能力优秀
+    model: deepseek-v3.2-exp  # Claude 写作能力优秀
     temperature: 0.5
     max_tokens: 4096
 

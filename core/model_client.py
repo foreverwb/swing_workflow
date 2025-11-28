@@ -9,6 +9,10 @@ import json
 from typing import Dict, Any, List, Optional
 from loguru import logger
 import copy
+from dotenv import load_dotenv
+
+# 加载 .env 文件
+load_dotenv()
 
 try:
     from openai import OpenAI
@@ -101,8 +105,8 @@ class ModelClient:
         self.config = config
         self.provider = config.get('provider', 'openai')
         self.model = config.get('model', 'gpt-4o')
-        self.api_key = config.get('api_key') or self._get_api_key_from_env()
-        self.base_url = config.get('base_url')
+        self.api_key = self._get_api_key_from_env()
+        self.base_url = self._get_base_url_from_env()
         self.temperature = config.get('temperature', 0.3)
         self.max_tokens = config.get('max_tokens', 4096)
         self.timeout = config.get('timeout', 120)
@@ -123,9 +127,20 @@ class ModelClient:
         
     
     def _get_api_key_from_env(self) -> Optional[str]:
-        """从环境变量获取 API Key"""
-        return os.environ.get('OPENAI_API_KEY') or os.environ.get('DMXAPI_KEY')
+        """从 .env 环境变量获取 API Key（唯一入口）"""
+        api_key = os.environ.get('API_KEY')
+        if api_key:
+            return api_key
     
+    def _get_base_url_from_env(self) -> Optional[str]:
+        """从 .env 环境变量获取 Base URL"""
+        # 优先级1: 通用配置
+        base_url = os.environ.get('API_BASE_URL')
+        if base_url:
+            return base_url
+        
+        # 优先级2: 兼容旧配置
+        return os.environ.get('OPENAI_BASE_URL') or self.config.get('base_url')
     
     def chat_completion(
         self,

@@ -1,9 +1,7 @@
 """
-分析流程编排器
-定义完整分析流程的步骤顺序
+分析流程编排器（增强版）
+集成美化控制台输出
 """
-#!/usr/bin/python
-# -*- coding: UTF-8 -*-
 
 import json
 from typing import Dict, Any
@@ -17,7 +15,6 @@ from code_nodes import (
     strategy_calc_main,
     comparison_main
 )
-
 from utils.console_printer import (
     print_header,
     print_step,
@@ -29,9 +26,15 @@ from utils.console_printer import (
 
 
 class AnalysisPipeline:
-    """分析流程编排器"""
+    """分析流程编排器（增强版）"""
     
-    def __init__(self, agent_executor, cache_manager, env_vars: Dict[str, Any], enable_pretty_print: bool = True):
+    def __init__(
+        self, agent_executor, 
+        cache_manager, 
+        env_vars: Dict[str, Any],
+        enable_pretty_print: bool = True,
+        cache_file: str = None
+    ):
         """
         初始化 Pipeline
         
@@ -45,12 +48,11 @@ class AnalysisPipeline:
         self.cache_manager = cache_manager
         self.env_vars = env_vars
         self.enable_pretty_print = enable_pretty_print
+        self.cache_file = cache_file  # ⭐ 新增：支持指定缓存文件
     
     def run(self, initial_data: Dict[str, Any]) -> Dict[str, Any]:
         """
-        运行完整流程
-        
-        注意：initial_data 应该是已经过 Calculator 计算的完整数据
+        运行完整流程（增强版）
         
         Args:
             initial_data: 初始数据（包含 23 个字段）
@@ -58,35 +60,35 @@ class AnalysisPipeline:
         Returns:
             完整分析结果
         """
-        
-         # 打印流程标题
+        # 打印流程标题
         if self.enable_pretty_print:
             symbol = initial_data.get("symbol", "UNKNOWN")
             print_header(
                 f"期权策略分析流程",
                 f"标的: {symbol} | 完整分析模式"
             )
-            
+        
         # 初始化上下文
         context = {
             "initial_data": initial_data,
             "symbol": initial_data.get("symbol", "UNKNOWN"),
-            "calculated_data": initial_data  # 直接使用已计算的数据
+            "calculated_data": initial_data
         }
-        # 定义流程步骤（移除 Calculator）
+        
+        # 定义流程步骤
         steps = [
-            ("事件检测", self._step_event_detection),
-            ("评分计算", self._step_scoring),
-            ("场景分析", self._step_scenario),
-            ("策略辅助", self._step_strategy_calc),
-            ("策略生成", self._step_strategy),
-            ("策略对比", self._step_comparison),
-            ("策略排序", self._step_ranking),
-            ("生成报告", self._step_report),
-            ("保存结果", self._step_save_results)
+            ("事件检测", self._step_event_detection, "检测财报、FOMC 等重大事件"),
+            ("评分计算", self._step_scoring, "计算四维评分（Gamma/Wall/Direction/IV）"),
+            ("场景分析", self._step_scenario, "推演市场场景及概率"),
+            ("策略辅助", self._step_strategy_calc, "计算行权价、DTE、RR、Pw"),
+            ("策略生成", self._step_strategy, "为每个场景设计期权策略"),
+            ("策略对比", self._step_comparison, "计算策略 EV、RAR、流动性"),
+            ("策略排序", self._step_ranking, "综合评分并排序推荐"),
+            ("生成报告", self._step_report, "生成人类可读的分析报告"),
+            ("保存结果", self._step_save_results, "保存分析结果到缓存")
         ]
         
-       # 执行流程
+        # 执行流程
         for i, (step_name, step_func, step_desc) in enumerate(steps, 1):
             if self.enable_pretty_print:
                 print_step(i, len(steps), f"{step_name} - {step_desc}")
@@ -126,35 +128,38 @@ class AnalysisPipeline:
         }
     
     def _step_event_detection(self, context: Dict) -> Dict:
-        """步骤2：事件检测"""
+        """步骤1：事件检测"""
         result = self.agent_executor.execute_code_node(
-            node_name="CODE1 - 事件检测",
+            node_name="事件检测",
             func=event_detection_main,
+            description="检测财报、FOMC、OPEX 等事件",
             user_query=f"分析 {context['symbol']}",
             **self.env_vars
         )
         
-        context["event_result"] = self._safe_parse_json(result.get("result"))
+        context["event_result"] = self._safe_parse_json(result)
         return context
     
     def _step_scoring(self, context: Dict) -> Dict:
-        """步骤3：评分计算"""
+        """步骤2：评分计算"""
         calculated_data = context["calculated_data"]
         
         ta_score = calculated_data.get("technical_analysis", {}).get("ta_score", 0)
         
         result = self.agent_executor.execute_code_node(
-            node_name="CODE2 - 评分计算",
+            node_name="评分计算",
             func=scoring_main,
+            description="计算 Gamma Regime、破墙、方向、IV 四维评分",
             agent3_output=calculated_data,
             technical_score=ta_score,
             **self.env_vars
         )
+        
         context["scoring_data"] = self._safe_parse_json(result)
         return context
     
     def _step_scenario(self, context: Dict) -> Dict:
-        """步骤4：场景分析"""
+        """步骤3：场景分析"""
         scoring_data = context["scoring_data"]
         
         messages = [
@@ -167,25 +172,28 @@ class AnalysisPipeline:
                 "content": prompts.agent5_scenario.get_user_prompt(scoring_data)
             }
         ]
+        
         response = self.agent_executor.execute_agent(
             agent_name="agent5",
             messages=messages,
-            json_schema=schemas.agent5_schema.get_schema()
+            json_schema=schemas.agent5_schema.get_schema(),
+            description="基于评分推演 3-5 种市场场景"
         )
         
         context["scenario_result"] = response.get("content", {})
         return context
     
     def _step_strategy_calc(self, context: Dict) -> Dict:
-        """步骤5：策略辅助计算"""
+        """步骤4：策略辅助计算"""
         calculated_data = context["calculated_data"]
         scenario_result = context["scenario_result"]
         
         ta_score = calculated_data.get("technical_analysis", {}).get("ta_score", 0)
         targets = calculated_data.get("targets", {})
         result = self.agent_executor.execute_code_node(
-            node_name="CODE3 - 策略辅助",
+            node_name="策略辅助",
             func=strategy_calc_main,
+            description="计算行权价、DTE、RR、Pw 等策略参数",
             agent3_output=targets,
             agent5_output=scenario_result,
             technical_score=ta_score,
@@ -196,7 +204,7 @@ class AnalysisPipeline:
         return context
     
     def _step_strategy(self, context: Dict) -> Dict:
-        """步骤6：策略生成"""
+        """步骤5：策略生成"""
         scenario_result = context["scenario_result"]
         strategy_calc_data = context["strategy_calc_data"]
         calculated_data = context["calculated_data"]
@@ -219,32 +227,34 @@ class AnalysisPipeline:
         response = self.agent_executor.execute_agent(
             agent_name="agent6",
             messages=messages,
-            json_schema=schemas.agent6_schema.get_schema()
+            json_schema=schemas.agent6_schema.get_schema(),
+            description="为每个场景设计 2-3 种期权策略"
         )
-        
+        print("策略生成 response", response)
         context["strategies_result"] = response.get("content", {})
         return context
     
     def _step_comparison(self, context: Dict) -> Dict:
-        """步骤7：策略对比"""
+        """步骤6：策略对比"""
         strategies_result = context["strategies_result"]
         scenario_result = context["scenario_result"]
         calculated_data = context["calculated_data"]
         
         result = self.agent_executor.execute_code_node(
-            node_name="CODE4 - 策略对比",
+            node_name="策略对比",
             func=comparison_main,
+            description="计算策略 EV、RAR、流动性、场景匹配度",
             strategies_output=strategies_result,
             scenario_output=scenario_result,
             agent3_output=calculated_data,
             **self.env_vars
         )
         
-        context["comparison_data"] = self._safe_parse_json(result.get("result"))
+        context["comparison_data"] = self._safe_parse_json(result)
         return context
     
     def _step_ranking(self, context: Dict) -> Dict:
-        """步骤8：策略排序"""
+        """步骤7：策略排序"""
         comparison_data = context["comparison_data"]
         scenario_result = context["scenario_result"]
         strategies_result = context["strategies_result"]
@@ -267,14 +277,15 @@ class AnalysisPipeline:
         response = self.agent_executor.execute_agent(
             agent_name="agent7",
             messages=messages,
-            json_schema=schemas.agent7_schema.get_schema()
+            json_schema=schemas.agent7_schema.get_schema(),
+            description="综合评分并排序，推荐 Top 3 策略"
         )
         
         context["ranking_result"] = response.get("content", {})
         return context
     
     def _step_report(self, context: Dict) -> Dict:
-        """步骤9：生成报告"""
+        """步骤8：生成报告"""
         calculated_data = context["calculated_data"]
         scenario_result = context["scenario_result"]
         ranking_result = context["ranking_result"]
@@ -298,14 +309,15 @@ class AnalysisPipeline:
         
         response = self.agent_executor.execute_agent(
             agent_name="agent8",
-            messages=messages
+            messages=messages,
+            description="生成人类可读的 Markdown 报告"
         )
         
         context["final_report"] = response.get("content", "")
         return context
     
     def _step_save_results(self, context: Dict) -> Dict:
-        """步骤10：保存结果"""
+        """步骤9：保存结果"""
         symbol = context["symbol"]
         
         self.cache_manager.save_complete_analysis(
@@ -314,7 +326,8 @@ class AnalysisPipeline:
             scenario=context["scenario_result"],
             strategies=context["strategies_result"],
             ranking=context["ranking_result"],
-            report=context["final_report"]
+            report=context["final_report"],
+            cache_file=getattr(self, 'cache_file', None)  # ⭐ 传递 cache_file
         )
         
         if self.enable_pretty_print:

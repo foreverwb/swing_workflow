@@ -35,16 +35,6 @@ class Agent3Handler:
         logger.info(f"🎯 标的: {symbol}")
         logger.info(f"📸 图片数量: {image_count}")
         logger.info(f"📋 消息数量: {len(inputs)}")
-        
-        # 打印 system prompt 前500字符
-        for msg in inputs:
-            if msg.get("role") == "system":
-                content = msg["content"]
-                logger.info(f"\n📝 System Prompt (前500字符):")
-                logger.info(f"{content[:500]}...")
-                break
-        
-        logger.info("="*80 + "\n")
     
     def log_response(self, symbol: str, response: Dict, parsed_data: Dict):
         """

@@ -131,72 +131,11 @@ class FullAnalysisMode(BaseMode):
         handler.log_request(symbol, inputs, valid_img_count)
         
         # 调用 API
-        # response = self.agent_executor.execute_vision_agent(
-        #     agent_name="agent3",
-        #     inputs=inputs,
-        #     json_schema=schemas.agent3_schema.get_schema()
-        # )
-        response = {
-  "content": {
-    "targets": {
-      "atm_iv": {
-        "iv_14d": 0.45,
-        "iv_7d": 0.45,
-        "iv_source": "7d"
-      },
-      "directional_metrics": {
-        "vanna_dir": "up",
-        "dex_same_dir_pct": 0.61,
-        "iv_path": "升",
-        "iv_path_confidence": "high",
-        "vanna_confidence": "medium"
-      },
-      "gamma_metrics": {
-        "net_gex_sign": "positive_gamma",
-        "next_cluster_peak": {
-          "price": 195,
-          "abs_gex": 50
-        },
-        "spot_vs_trigger": "above",
-        "vol_trigger": 178,
-        "gap_distance_dollar": 16.1,
-        "monthly_data": {
-          "next_cluster_peak": {
-            "abs_gex": 50,
-            "price": 195
-          }
-        },
-        "nearby_peak": {
-          "abs_gex": 199.89,
-          "price": 194
-        },
-        "net_gex": 199.89
-      },
-      "spot_price": 194.1,
-      "symbol": "NVDA",
-      "walls": {
-        "major_wall": 200,
-        "major_wall_type": "call",
-        "put_wall": 185,
-        "call_wall": 200
-      }
-    },
-    "timestamp": "2025-11-12T01:51:30",
-    "indices": {
-      "qqq": {
-        "atm_iv_idx": 0.13,
-        "net_gex_idx": -50,
-        "spot_idx": 6848.61
-      },
-      "spx": {
-        "spot_idx": 6848.61,
-        "atm_iv_idx": 0.13,
-        "net_gex_idx": -50
-      }
-    },
-    "missing_fields": []
-  }
-}
+        response = self.agent_executor.execute_vision_agent(
+            agent_name="agent3",
+            inputs=inputs,
+            json_schema=schemas.agent3_schema.get_schema()
+        )
         
         # 解析响应
         raw_content = response.get("content", {})
@@ -337,7 +276,8 @@ class FullAnalysisMode(BaseMode):
             agent_executor=self.agent_executor,
             cache_manager=self.cache_manager,
             env_vars=self.env_vars,
-            enable_pretty_print=True
+            enable_pretty_print=True,
+            cache_file=self.engine.cache_file  # ⭐ 传递 cache_file
         )
         
         result = pipeline.run(aggregated_result)

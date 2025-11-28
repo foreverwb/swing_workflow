@@ -25,26 +25,16 @@ console = Console()
 
 
 def setup_logging(log_dir: Path = Path("logs")):
-    """配置日志"""
-    log_dir.mkdir(exist_ok=True)
-    
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    log_file = log_dir / f"workflow_{timestamp}.log"
-    
-    # 配置 loguru
+    """配置日志（仅控制台输出）"""
+    # 配置 loguru - 仅输出到控制台
     logger.remove()  # 移除默认handler
     logger.add(
         sys.stderr,
-        format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <level>{message}</level>",
+        format="<green>{time:HH:mm:ss}</green> | <level>{level: <8}</level> | <level>{message}</level>",
         level="INFO"
     )
-    logger.add(
-        log_file,
-        format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {message}",
-        level="DEBUG"
-    )
     
-    return log_file
+    logger.info("✅ 日志系统初始化完成（控制台模式）")
 
 
 def load_env_config(config_path: Path = Path("config/env_config.yaml")) -> dict:

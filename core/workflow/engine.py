@@ -16,16 +16,18 @@ from .agent_executor import AgentExecutor
 class WorkflowEngine:
     """工作流引擎 - 简化版"""
     
-    def __init__(self, model_client: ModelClientManager, env_vars: Dict[str, Any]):
+    def __init__(self, model_client: ModelClientManager, env_vars: Dict[str, Any], cache_file: str = None):
         """
         初始化工作流引擎
         
         Args:
             model_client: 模型客户端管理器
             env_vars: 环境变量字典
+            cache_file: 指定缓存文件名（如 NVDA_20251127.json）
         """
         self.model_client = model_client
         self.env_vars = env_vars
+        self.cache_file = cache_file  # ⭐ 新增：支持指定缓存文件
         
         # 依赖注入
         self.state_manager = StateManager()

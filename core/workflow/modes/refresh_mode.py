@@ -65,7 +65,8 @@ class RefreshMode(FullAnalysisMode):
             symbol=symbol,
             data=calculated_data,
             note="盘中刷新",
-            is_initial=False  # refresh 不是初始数据
+            is_initial=False,  # refresh 不是初始数据
+            cache_file=self.engine.cache_file  # ⭐ 传递 cache_file
         )
         
         # 7. 生成摘要
@@ -78,6 +79,7 @@ class RefreshMode(FullAnalysisMode):
             "status": "success",
             "mode": "refresh",
             "snapshot": snapshot,
+            "snapshot_key": snapshot_result.get("snapshot_key"),
             "snapshot_summary": summary,
             "total_snapshots": snapshot_result.get("total_snapshots", 0)
         }

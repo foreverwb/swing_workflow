@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 from loguru import logger
+import re
 
 
 class CacheManager:
@@ -99,43 +100,51 @@ class CacheManager:
         strategies: Dict,
         ranking: Dict,
         report: str,
-        start_date: str = None
+        start_date: str = None,
+        cache_file: str = None  # ⭐ 新增：支持指定缓存文件
     ):
         """
-        保存完整分析结果
+        保存完整分析结果到 source_target
         
         Args:
             symbol: 股票代码
-            initial_data: 初始数据
+            initial_data: 初始数据（计算后的完整数据）
             scenario: 场景分析
             strategies: 策略列表
             ranking: 策略排序
             report: 最终报告
             start_date: 分析开始日期（YYYYMMDD）
+            cache_file: 指定缓存文件名（如 NVDA_20251127.json）
         """
         if not start_date:
             start_date = datetime.now().strftime("%Y%m%d")
         
-        cache_file = self._get_output_filename(symbol, start_date)
+        # ⭐ 支持指定缓存文件
+        if cache_file:
+            # 从文件名提取 start_date
+            match = re.match(r'(\w+)_(\d{8})\.json', cache_file)
+            if match:
+                start_date = match.group(2)
+            cache_path = self.output_dir / symbol / cache_file
+        else:
+            cache_path = self._get_output_filename(symbol, start_date)
         
         # 加载现有缓存
-        cached = self.load_analysis(symbol, start_date)
-        
-        if not cached:
+        if cache_path.exists():
+            with open(cache_path, 'r', encoding='utf-8') as f:
+                cached = json.load(f)
+        else:
+            # 创建新缓存
             cached = {
                 "symbol": symbol,
-                "start_date": start_date,
-                "created_at": datetime.now().isoformat(),
-                "last_updated": None,
-                "analysis": {},
-                "backtest_records": []
+                "start_date": datetime.strptime(start_date, "%Y%m%d").strftime("%Y-%m-%d"),
+                "created_at": datetime.now().isoformat()
             }
         
-        # 更新分析结果
-        cached["analysis"] = {
-            "status": "completed",
-            "initial_date": datetime.now().strftime("%Y-%m-%d"),
-            "initial_spot": self._get_nested_value(initial_data, "targets.spot_price"),
+        # ⭐ 写入 source_target（计算后的完整数据 + scenario）
+        cached["source_target"] = {
+            "timestamp": datetime.now().isoformat(),
+            "data": initial_data,  # 包含 23个原始字段 + 3个计算字段
             "scenario": scenario,
             "strategies": strategies,
             "ranking": ranking,
@@ -145,8 +154,9 @@ class CacheManager:
         cached["last_updated"] = datetime.now().isoformat()
         
         # 保存缓存
-        self._save_cache(cache_file, cached)
-        logger.success(f"✅ 完整分析结果已保存: {cache_file}")
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        self._save_cache(cache_path, cached)
+        logger.success(f"✅ 完整分析结果已保存: {cache_path}")
     
     def add_backtest_record(self, symbol: str, record: Dict[str, Any], start_date: str = None):
         """
