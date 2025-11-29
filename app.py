@@ -8,6 +8,7 @@ Swing Quant Workflow - 主程序入口
 import sys
 import yaml
 import json
+import prompts
 from pathlib import Path
 from datetime import datetime
 import click
@@ -225,15 +226,101 @@ def cli():
 
 @cli.command()
 @click.option('--symbol', '-s', required=True, help='股票代码 (如 AAPL)')
-@click.option('--folder', '-f', required=True, type=click.Path(exists=True), help='数据文件夹路径')
+@click.option('--folder', '-f', type=click.Path(exists=True), help='数据文件夹路径（可选）')
 @click.option('--config', '-c', default='config/model_config.yaml', help='模型配置文件路径')
 @click.option('--output', '-o', type=click.Path(), help='输出文件路径')
 @click.option('--mode', '-m', type=click.Choice(['full', 'update']), default='full', 
-              help='运行模式：full=完整分析, update=增量补齐')
-def analyze(symbol: str, folder: str, config: str, output: str, mode: str):
-    """分析单个股票的期权策略"""
+              help='运行模式：full=完整分析, update=增量补齐（仅在有文件夹时有效）')
+@click.option('--cache', type=str, help='指定缓存文件名（如 NVDA_20251127.json），用于 update 模式')
+def analyze(symbol: str, folder: str, config: str, output: str, mode: str, cache: str):
+    """
+    智能分析命令：
+    - 无文件夹：生成数据抓取命令清单（Agent2）
+    - 有文件夹：执行完整期权策略分析（Agent3 → Pipeline）
+    """
     
-    # 显示欢迎信息
+    # ⭐ 智能判断：是否提供文件夹
+    if not folder:
+        # ========== 模式A：生成命令清单（Agent2） ==========
+        console.print(Panel.fit(
+            f"[bold green]📋 生成命令清单: {symbol.upper()}[/bold green]\n"
+            f"[dim]未提供数据文件夹，将生成期权数据抓取命令[/dim]",
+            border_style="green"
+        ))
+        
+        # 设置日志
+        setup_logging()
+        
+        # 加载配置
+        console.print("\n[yellow]📁 加载配置...[/yellow]")
+        model_client = ModelClientFactory.create_from_config(config)
+        env_vars = load_env_config()
+        
+        # 创建 Agent Executor
+        from core.workflow.agent_executor import AgentExecutor
+        agent_executor = AgentExecutor(model_client, env_vars, enable_pretty_print=True)
+        
+        console.print(f"\n[green]🚀 开始生成 {symbol.upper()} 的命令清单[/green]\n")
+        
+        try:
+            # 构建消息
+            messages = [
+                {
+                    "role": "system",
+                    "content": prompts.agent2_cmdlist.get_system_prompt(env_vars)
+                },
+                {
+                    "role": "user",
+                    "content": prompts.agent2_cmdlist.get_user_prompt(symbol.upper())
+                }
+            ]
+            
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                console=console
+            ) as progress:
+                task = progress.add_task("正在生成命令清单...", total=None)
+                
+                # 执行 Agent2
+                response = agent_executor.execute_agent(
+                    agent_name="agent2",
+                    messages=messages,
+                    description=f"为 {symbol.upper()} 生成命令清单"
+                )
+                
+                progress.update(task, completed=True)
+            
+            # 显示结果
+            content = response.get("content", "")
+            
+            console.print("\n[green]✅ 命令清单生成完成![/green]\n")
+            console.print(Panel(
+                content,
+                title=f"📋 {symbol.upper()} 数据抓取命令清单",
+                border_style="green"
+            ))
+            
+            console.print(f"\n[yellow]💡 下一步: 根据命令清单抓取数据后，执行:[/yellow]")
+            console.print(f"[cyan]   python app.py analyze -s {symbol.upper()} -f <数据文件夹路径>[/cyan]")
+        
+        except Exception as e:
+            logger.exception("命令清单生成失败")
+            console.print(f"\n[red]❌ 错误: {str(e)}[/red]")
+            sys.exit(1)
+        
+        return  # ⭐ 提前退出
+    
+    # ========== 模式B：完整分析流程（Agent3 → Pipeline） ==========
+    
+    # ⭐ 参数验证：update 模式必须指定 --cache
+    if mode == 'update' and not cache:
+        console.print(f"[red]❌ 错误: update 模式必须指定 --cache 参数[/red]")
+        console.print(f"[yellow]💡 示例:[/yellow]")
+        console.print(f"[cyan]   python app.py analyze -s {symbol.upper()} -f {folder} --mode update --cache {symbol.upper()}_20251129.json[/cyan]")
+        console.print(f"\n[dim]提示: 可用的缓存文件位于 data/output/{symbol.upper()}/ 目录下[/dim]")
+        sys.exit(1)
+    
     mode_desc = "完整分析" if mode == "full" else "增量补齐"
     console.print(Panel.fit(
         f"[bold blue]Swing Quant Workflow[/bold blue]\n"
@@ -242,16 +329,15 @@ def analyze(symbol: str, folder: str, config: str, output: str, mode: str):
     ))
     
     # 设置日志
-    log_file = setup_logging()
-    logger.info(f"日志文件: {log_file}")
+    setup_logging()
     
     # 加载配置
     console.print("\n[yellow]📁 加载配置...[/yellow]")
     model_client = ModelClientFactory.create_from_config(config)
     env_vars = load_env_config()
     
-    # 创建工作流引擎
-    engine = WorkflowEngine(model_client, env_vars)
+    # ⭐ 传递 cache 参数到引擎
+    engine = WorkflowEngine(model_client, env_vars, cache_file=cache)
     
     # 运行分析
     console.print(f"\n[green]🚀 开始{mode_desc} {symbol.upper()}[/green]\n")
@@ -309,8 +395,18 @@ def analyze(symbol: str, folder: str, config: str, output: str, mode: str):
                 console.print(f"\n[dim]报告已保存至: {output_path}[/dim]")
             
             # 显示事件风险
-            if result.get("event_risk", {}).get("risk_level") != "low":
-                console.print(f"\n[red]⚠️ 事件风险: {result['event_risk']['risk_level']}[/red]")
+            event_risk = result.get("event_risk", {})
+            if isinstance(event_risk, dict):
+                risk_level = event_risk.get("risk_level", "low")
+                if risk_level != "low":
+                    event_count = event_risk.get("event_count", 0)
+                    recommendations = event_risk.get("recommendations", {})
+                    note = recommendations.get("note", "")
+                    
+                    console.print(f"\n[red]⚠️ 事件风险: {risk_level.upper()}[/red]")
+                    console.print(f"[yellow]检测到 {event_count} 个近期事件[/yellow]")
+                    if note:
+                        console.print(f"[dim]{note}[/dim]")
         
         else:
             console.print(f"\n[red]❌ 未知状态: {result['status']}[/red]")
@@ -318,20 +414,34 @@ def analyze(symbol: str, folder: str, config: str, output: str, mode: str):
     except Exception as e:
         logger.exception("分析过程出错")
         console.print(f"\n[red]❌ 错误: {str(e)}[/red]")
-        console.print(f"[dim]详细日志: {log_file}[/dim]")
         sys.exit(1)
 
 
 @cli.command()
 @click.option('--symbol', '-s', required=True, help='股票代码')
 @click.option('--folder', '-f', required=True, type=click.Path(exists=True), help='数据文件夹')
-@click.option('--note', '-n', default='', help='快照备注（可选）')
-def refresh(symbol: str, folder: str, note: str):
+@click.option('--cache', type=str, help='指定缓存文件名（如 NVDA_20251127.json）')
+def refresh(symbol: str, folder: str, cache: str):
     """盘中刷新 Greeks 数据（快速快照）"""
-    
     console.print(Panel.fit(
         f"[bold cyan]📸 盘中快照: {symbol.upper()}[/bold cyan]\n"
         f"[dim]仅运行 Agent3 + 计算引擎[/dim]",
+        border_style="cyan"
+    ))
+    
+     # ⭐ 参数验证：refresh 模式必须指定 --cache
+    if not cache:
+        console.print(f"[red]❌ 错误: refresh 模式必须指定 --cache 参数[/red]")
+        console.print(f"[yellow]💡 说明: refresh 需要追加到现有的分析缓存中[/yellow]")
+        console.print(f"[yellow]示例:[/yellow]")
+        console.print(f"[cyan]   python app.py refresh -s {symbol.upper()} -f {folder} --cache {symbol.upper()}_20251129.json[/cyan]")
+        console.print(f"\n[dim]提示: 可用的缓存文件位于 data/output/{symbol.upper()}/ 目录下[/dim]")
+        console.print(f"[dim]      如果还没有分析缓存，请先运行: python app.py analyze -s {symbol.upper()} -f <folder>[/dim]")
+        sys.exit(1)
+    
+    console.print(Panel.fit(
+        f"[bold cyan]📸 盘中快照: {symbol.upper()}[/bold cyan]\n"
+        f"[dim]仅运行 Agent3 + 计算引擎 → 追加到 {cache}[/dim]",
         border_style="cyan"
     ))
     

@@ -1,23 +1,28 @@
-# 1. 完整分析
+### 1. cmd list
 ```
-python app.py analyze -s {SYMBOL} -f ./data/images --mode full
+python app.py analyze -s {SYMBOL}
 ```
-# 2. 补齐数据
+
+### 2. full analyze
+```
+python app.py analyze -s {SYMBOL} -f ./data/images
+```
+### 3. update
 ```
 python app.py analyze -s {SYMBOL} -f ./data/images --mode update --cache {SYMBOL + datetime}.json
 ```
 
-# 3. 盘中刷新
+### 3. refresh
 ```
 python app.py refresh -s {SYMBOL} -f ./data/images --cache {SYMBOL + datetime}.json
 ```
 
-# 4. 查看历史 -- 表格格式
+### 4. history
 ```
 python app.py history -s {SYMBOL}
 ```
 
-# 5. 回测验证
+### 5. back test verification
 ```
 python app.py backtest -s {SYMBOL} --test-date 2025-11-20 -f data/uploads/NVDA_close
 ```
