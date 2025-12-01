@@ -210,6 +210,8 @@ class CacheManager:
     # 希腊值快照管理（refresh 快照）
     # ============================================
     
+    
+    # 修复 save_greeks_snapshot 方法,中找到 save_greeks_snapshot 方法
     def save_greeks_snapshot(
         self,
         symbol: str,
@@ -251,13 +253,6 @@ class CacheManager:
         # 提取 targets 数据
         targets = data.get("targets", {})
         
-        # 创建快照记录
-        snapshot_record = {
-            "timestamp": datetime.now().isoformat(),
-            "note": note,
-            "targets": targets
-        }
-        
         # 读取现有快照文件
         if snapshot_file.exists():
             with open(snapshot_file, 'r', encoding='utf-8') as f:
@@ -270,17 +265,31 @@ class CacheManager:
                 "source_target": None
             }
         
+        # ✅ 修复：计算 snapshot_id
+        if is_initial:
+            snapshot_id = 0  # source_target 的 ID 为 0
+        else:
+            # 统计已有的 snapshots_N 数量
+            snapshot_count = sum(1 for key in snapshots_data.keys() if key.startswith("snapshots_"))
+            snapshot_id = snapshot_count + 1
+        
+        # ✅ 修复：创建快照记录（添加 snapshot_id）
+        snapshot_record = {
+            "snapshot_id": snapshot_id,  # ✅ 新增字段
+            "timestamp": datetime.now().isoformat(),
+            "note": note,
+            "targets": targets
+        }
+        
         if is_initial:
             # 保存初始数据到 source_target
             snapshots_data["source_target"] = snapshot_record
             logger.info(f"✅ 保存初始分析数据到 source_target")
         else:
-            # 计算 refresh 次数
-            snapshot_count = sum(1 for key in snapshots_data.keys() if key.startswith("snapshots_"))
-            next_snapshot_key = f"snapshots_{snapshot_count + 1}"
-            
+            # 保存到 snapshots_N
+            next_snapshot_key = f"snapshots_{snapshot_id}"
             snapshots_data[next_snapshot_key] = snapshot_record
-            logger.info(f"✅ 保存第 {snapshot_count + 1} 次 refresh 快照")
+            logger.info(f"✅ 保存第 {snapshot_id} 次 refresh 快照")
         
         # 保存文件
         with open(snapshot_file, 'w', encoding='utf-8') as f:
@@ -291,7 +300,7 @@ class CacheManager:
         return {
             "status": "success",
             "snapshot_file": str(snapshot_file),
-            "snapshot": snapshot_record,
+            "snapshot": snapshot_record,  # ✅ 返回包含 snapshot_id 的记录
             "total_snapshots": sum(1 for k in snapshots_data.keys() if k.startswith("snapshots_"))
         }
     
