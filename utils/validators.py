@@ -4,7 +4,8 @@
 
 import re
 from typing import Tuple
-
+from datetime import datetime
+from pathlib import Path
 
 def validate_symbol(symbol: str) -> Tuple[bool, str]:
     """
@@ -55,3 +56,68 @@ def normalize_symbol(symbol: str) -> str:
         return "UNKNOWN"
     
     return symbol.strip().upper()
+
+def validate_cache_file(cache_file: str, symbol: str) -> tuple[bool, str, dict]:
+    """
+    验证缓存文件的合法性
+    
+    Args:
+        cache_file: 缓存文件名（如 NVDA_20251130.json）
+        symbol: 股票代码
+        
+    Returns:
+        (is_valid, error_message, cache_info)
+    """
+    # 1. 解析文件名
+    match = re.match(r'(\w+)_(\d{8})\.json', cache_file)
+    if not match:
+        return False, f"缓存文件名格式错误，应为 {{SYMBOL}}_{{YYYYMMDD}}.json", {}
+    
+    file_symbol = match.group(1)
+    file_date = match.group(2)
+    
+    # 2. 验证股票代码匹配
+    if file_symbol.upper() != symbol.upper():
+        return False, f"缓存文件股票代码 ({file_symbol}) 与参数不匹配 ({symbol})", {}
+    
+    # 3. 验证日期格式
+    try:
+        parsed_date = datetime.strptime(file_date, "%Y%m%d")
+    except ValueError:
+        return False, f"缓存文件日期格式错误: {file_date}", {}
+    
+    # 4. 检查文件是否存在
+    cache_path = Path(f"data/output/{symbol}/{file_date}/{cache_file}")
+    if not cache_path.exists():
+        return False, f"缓存文件不存在: {cache_path}", {}
+    
+    # 5. 加载并验证文件内容
+    try:
+        with open(cache_path, 'r', encoding='utf-8') as f:
+            cache_data = json.load(f)
+    except Exception as e:
+        return False, f"缓存文件读取失败: {str(e)}", {}
+    
+    # 6. 验证文件内部的 start_date 与文件名日期一致
+    start_date = cache_data.get("start_date", "")
+    if start_date:
+        # 格式：2025-11-30 → 20251130
+        internal_date = start_date.replace("-", "")
+        if internal_date != file_date:
+            return False, (
+                f"缓存文件内部日期不匹配！\n"
+                f"  文件名日期: {file_date}\n"
+                f"  内部日期: {internal_date} ({start_date})"
+            ), {}
+    
+    cache_info = {
+        "symbol": file_symbol,
+        "date": file_date,
+        "parsed_date": parsed_date,
+        "cache_path": cache_path,
+        "start_date": start_date,
+        "has_source_target": cache_data.get("source_target") is not None,
+        "snapshot_count": sum(1 for k in cache_data.keys() if k.startswith("snapshots_"))
+    }
+    
+    return True, "", cache_info

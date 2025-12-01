@@ -22,7 +22,7 @@ from core.model_client import ModelClientFactory
 from core.workflow import WorkflowEngine
 from utils.console_printer import print_error_summary
 from core.workflow.agent_executor import AgentExecutor
-from utils.validators import validate_symbol
+from utils.validators import validate_symbol, validate_cache_file
 
 
 console = Console()
@@ -328,6 +328,18 @@ def analyze(symbol: str, folder: str, config: str, output: str, mode: str, cache
         console.print(f"[cyan]   python app.py analyze -s {symbol.upper()} -f {folder} --mode update --cache {symbol.upper()}_20251129.json[/cyan]")
         console.print(f"\n[dim]提示: 可用的缓存文件位于 data/output/{symbol.upper()}/ 目录下[/dim]")
         sys.exit(1)
+
+    # ⭐ 新增：验证缓存文件
+    if cache:
+        is_valid, error_msg, cache_info = validate_cache_file(cache, symbol)
+        
+        if not is_valid:
+            console.print(f"[red]❌ 缓存文件验证失败[/red]")
+            console.print(f"[red]   {error_msg}[/red]")
+            sys.exit(1)
+        
+        console.print(f"\n[green]✅ 缓存文件验证通过[/green]")
+        console.print(f"[dim]   将更新缓存: {cache}[/dim]")
     
     mode_desc = "完整分析" if mode == "full" else "增量补齐"
     console.print(Panel.fit(
@@ -446,21 +458,37 @@ def refresh(symbol: str, folder: str, cache: str):
         border_style="cyan"
     ))
     
-     # ⭐ 参数验证：refresh 模式必须指定 --cache
-    if not cache:
-        console.print(f"[red]❌ 错误: refresh 模式必须指定 --cache 参数[/red]")
-        console.print(f"[yellow]💡 说明: refresh 需要追加到现有的分析缓存中[/yellow]")
-        console.print(f"[yellow]示例:[/yellow]")
-        console.print(f"[cyan]   python app.py refresh -s {symbol.upper()} -f {folder} --cache {symbol.upper()}_20251129.json[/cyan]")
-        console.print(f"\n[dim]提示: 可用的缓存文件位于 data/output/{symbol.upper()}/ 目录下[/dim]")
-        console.print(f"[dim]      如果还没有分析缓存，请先运行: python app.py analyze -s {symbol.upper()} -f <folder>[/dim]")
+    # ✅ 新增：验证缓存文件
+    is_valid, error_msg, cache_info = validate_cache_file(cache, symbol)
+    
+    if not is_valid:
+        console.print(f"[red]❌ 缓存文件验证失败[/red]")
+        console.print(f"[red]   {error_msg}[/red]")
+        console.print(f"\n[yellow]💡 提示:[/yellow]")
+        console.print(f"[yellow]   1. 确保文件名格式正确: {{SYMBOL}}_{{YYYYMMDD}}.json[/yellow]")
+        console.print(f"[yellow]   2. 确保文件存在于: data/output/{symbol.upper()}/[/yellow]")
+        console.print(f"[yellow]   3. 使用 'python app.py analyze -s {symbol.upper()} -f <folder>' 先创建初始分析[/yellow]")
         sys.exit(1)
     
-    console.print(Panel.fit(
-        f"[bold cyan]📸 盘中快照: {symbol.upper()}[/bold cyan]\n"
-        f"[dim]仅运行 Agent3 + 计算引擎 → 追加到 {cache}[/dim]",
-        border_style="cyan"
-    ))
+    # ✅ 新增：检查 source_target 完整性
+    if not cache_info["has_source_target"]:
+        console.print(f"[red]❌ 缓存文件缺少初始分析数据 (source_target)[/red]")
+        console.print(f"\n[yellow]⚠️ 当前缓存状态:[/yellow]")
+        console.print(f"[yellow]   • 文件: {cache}[/yellow]")
+        console.print(f"[yellow]   • 快照数量: {cache_info['snapshot_count']}[/yellow]")
+        console.print(f"[yellow]   • source_target: null[/yellow]")
+        console.print(f"\n[yellow]💡 解决方案:[/yellow]")
+        console.print(f"[yellow]   必须先执行完整分析以生成 source_target:[/yellow]")
+        console.print(f"[cyan]   python app.py analyze -s {symbol.upper()} -f <初始数据文件夹> --cache {cache}[/cyan]")
+        console.print(f"\n[dim]   说明: refresh 模式用于盘中更新，必须在完整分析后使用[/dim]")
+        sys.exit(1)
+    
+    # ✅ 显示缓存信息
+    console.print(f"\n[green]✅ 缓存文件验证通过[/green]")
+    console.print(f"[dim]   股票代码: {cache_info['symbol']}[/dim]")
+    console.print(f"[dim]   分析日期: {cache_info['start_date']}[/dim]")
+    console.print(f"[dim]   已有快照: {cache_info['snapshot_count']} 个[/dim]")
+    console.print(f"[dim]   source_target: 完整[/dim]")
     
     # 设置日志
     log_file = setup_logging()
