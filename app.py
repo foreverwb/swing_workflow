@@ -102,6 +102,10 @@ def load_env_config(config_path: Path = Path("config/env_config.yaml")) -> dict:
                 'ENTRY_THRESHOLD_PROBABILITY': config['scoring'].get('entry_threshold_probability', 60),
                 'LIGHT_POSITION_PROBABILITY': config['scoring'].get('light_position_probability', 50),
                 'TECHNICAL_SCORE_MAX': config['scoring'].get('technical_score_max', 2),
+                'INDEX_GAP_THRESHOLD_RATIO': config['scoring'].get('index_gap_threshold_ratio', 0.5),
+                'INDEX_CONFLICT_PENALTY': config['scoring'].get('index_conflict_penalty', -1),
+                'INDEX_CONSISTENCY_BONUS': config['scoring'].get('index_consistency_bonus', 1),
+                'SCORE_WEIGHT_INDEX_CONSISTENCY': config['scoring'].get('weight_index_consistency', 0.10)
             })
         
         # Strikes参数
