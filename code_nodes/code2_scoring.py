@@ -71,7 +71,10 @@ class OptionsScoring:
             'PW_DEBIT_VANNA_WEIGHT_LOW': env_vars["PW_DEBIT_VANNA_WEIGHT_LOW"],
             'ENTRY_THRESHOLD_SCORE': env_vars["ENTRY_THRESHOLD_SCORE"],
             'ENTRY_THRESHOLD_PROBABILITY': env_vars["ENTRY_THRESHOLD_PROBABILITY"],
-            'LIGHT_POSITION_PROBABILITY': env_vars["LIGHT_POSITION_PROBABILITY"]
+            'LIGHT_POSITION_PROBABILITY': env_vars["LIGHT_POSITION_PROBABILITY"],
+            'INDEX_GAP_THRESHOLD_RATIO': env_vars.get("INDEX_GAP_THRESHOLD_RATIO", 0.5),
+            'INDEX_CONFLICT_PENALTY': env_vars.get("INDEX_CONFLICT_PENALTY", -1),
+            'INDEX_CONSISTENCY_BONUS': env_vars.get("INDEX_CONSISTENCY_BONUS", 1),
         }
         for key, default_value in defaults.items():
             value = env_vars.get(key, default_value)
@@ -339,9 +342,14 @@ class OptionsScoring:
     
     def calculate_total_score(self, scores: Dict) -> Dict:
         """
-        综合评分计算
-        
-        四维加权求和
+        综合评分计算（更新权重分配）
+    
+        原始四维 → 五维：
+        - Gamma Regime: 40% → 35%
+        - Break Wall: 30% → 25%
+        - Direction: 20% → 20%
+        - IV: 10% → 10%
+        - Index Consistency: 10%
         
         Args:
             scores: 各维度评分字典
@@ -353,6 +361,7 @@ class OptionsScoring:
         break_score = scores['break_wall']['score']
         direction_score = scores['direction']['score']
         iv_score = scores['iv']['score']
+        index_score = scores['index_consistency']['score']  
         
         w = self.env
         
@@ -361,7 +370,8 @@ class OptionsScoring:
             gamma_score * w['SCORE_WEIGHT_GAMMA_REGIME'] +
             break_score * w['SCORE_WEIGHT_BREAK_WALL'] +
             direction_score * w['SCORE_WEIGHT_DIRECTION'] +
-            iv_score * w['SCORE_WEIGHT_IV']
+            iv_score * w['SCORE_WEIGHT_IV'] +
+            index_score * w['SCORE_WEIGHT_INDEX_CONSISTENCY']
         )
         # 详细分解
         breakdown = (
@@ -369,10 +379,7 @@ class OptionsScoring:
             f"{break_score}×{w['SCORE_WEIGHT_BREAK_WALL']:.1f}+"
             f"{direction_score}×{w['SCORE_WEIGHT_DIRECTION']:.1f}+"
             f"{iv_score}×{w['SCORE_WEIGHT_IV']:.1f}="
-            f"{gamma_score * w['SCORE_WEIGHT_GAMMA_REGIME']:.1f}+"
-            f"{break_score * w['SCORE_WEIGHT_BREAK_WALL']:.1f}+"
-            f"{direction_score * w['SCORE_WEIGHT_DIRECTION']:.1f}+"
-            f"{iv_score * w['SCORE_WEIGHT_IV']:.1f}="
+            f"{index_score}×{w['SCORE_WEIGHT_INDEX_CONSISTENCY']:.1f}"
             f"{total:.1f}"
         )
         
@@ -547,6 +554,7 @@ class OptionsScoring:
             完整的评分结果 JSON
         """
         targets = agent3_data.get('targets', {})
+        indices = agent3_data.get('indices', {})
         if not targets:
             raise ValueError("Agent 3 数据中未找到 targets 字段")
         
@@ -563,12 +571,18 @@ class OptionsScoring:
         iv_result = self.calculate_iv_score(
             targets.get('directional_metrics', {})
         )  
-        # 汇总评分
+        index_result = self.calculate_index_consistency_score(
+            targets.get('gamma_metrics', {}),
+            targets.get('directional_metrics', {}),
+            indices
+        )
+            # 汇总评分
         scores = {
             'gamma': gamma_result,
             'break_wall': break_wall_result,
             'direction': direction_result,
-            'iv': iv_result
+            'iv': iv_result,
+            'index_consistency': index_result
         }  
         # 总分计算
         total_result = self.calculate_total_score(scores)  
@@ -633,3 +647,197 @@ class OptionsScoring:
             "risk_warning": risk_warning
         } 
         return result
+    
+    def calculate_index_consistency_score(
+    self, 
+    gamma_metrics: Dict, 
+    directional_metrics: Dict,
+    indices: Dict
+) -> Dict:
+        """
+        5. 指数背景一致性评估（权重 10%）
+        
+        评分规则：
+        1. Range 场景一致性（+1分）：
+        - 指数 NET-GEX = positive_gamma
+        - 个股 spot_vs_trigger = above（在墙上）
+        - IV 路径 = 平/降
+        
+        2. Trend 场景一致性（+1分）：
+        - 指数 NET-GEX = negative_gamma
+        - 个股破墙距离 ≥ 0.5 × EM1_index
+        - IV 路径与方向配合（below+升 或 above+降）
+        
+        3. 方向冲突惩罚（-1分）：
+        - 指数负γ趋势 但 个股DEX同向<50%
+        - 指数正γ区间 但 个股深度负γ区域
+        
+        Args:
+            gamma_metrics: 个股 Gamma 指标字典
+            directional_metrics: 个股方向指标字典
+            indices: 指数背景数据字典
+            
+        Returns:
+            {
+                "score": 最终评分 (1-10),
+                "consistency_level": "强一致" | "中性" | "冲突",
+                "consistency_note": 详细说明,
+                "rationale": 评分逻辑,
+                "primary_index": 主要参考指数,
+                "index_net_gex": 指数净Gamma方向,
+                "adjustment": 调整分数
+            }
+        """
+    
+        base_score = 5
+        adjustment = 0
+        consistency_note = []
+        
+        # 从环境变量读取阈值参数
+        threshold_ratio = self.env.get('INDEX_GAP_THRESHOLD_RATIO', 0.5)
+        conflict_penalty = self.env.get('INDEX_CONFLICT_PENALTY', -1)
+        consistency_bonus = self.env.get('INDEX_CONSISTENCY_BONUS', 1)
+        
+        # ========================================
+        # 数据完整性检查
+        # ========================================
+        if not indices or not isinstance(indices, dict):
+            return {
+                "score": base_score,
+                "consistency_level": "无数据",
+                "consistency_note": "未提供指数背景数据，给予中性评分",
+                "rationale": "缺失指数数据，默认5分",
+                "primary_index": "N/A",
+                "index_net_gex": "N/A",
+                "adjustment": 0
+            }
+        
+        # ========================================
+        # 选择主要参考指数（优先级：SPX > QQQ > 首个）
+        # ========================================
+        primary_index = None
+        primary_symbol = None
+        
+        for idx_symbol in ['SPX', 'QQQ']:
+            if idx_symbol in indices:
+                primary_index = indices[idx_symbol]
+                primary_symbol = idx_symbol
+                break
+        
+        if not primary_index:
+            # 使用第一个可用指数
+            primary_symbol = list(indices.keys())[0]
+            primary_index = indices[primary_symbol]
+        
+        # ========================================
+        # 提取关键数据
+        # ========================================
+        # 指数数据
+        idx_net_gex = primary_index.get('net_gex_idx', '')
+        idx_em1 = primary_index.get('em1_dollar_idx', 0)
+        
+        # 个股数据
+        stock_spot_vs_trigger = gamma_metrics.get('spot_vs_trigger', '')
+        stock_gap_distance = gamma_metrics.get('gap_distance_dollar', 0)
+        stock_iv_path = directional_metrics.get('iv_path', '平')
+        stock_dex_same_dir = directional_metrics.get('dex_same_dir_pct', 0.5)
+        
+        # ========================================
+        # 规则1：Range 场景一致性（+1分）
+        # ========================================
+        if idx_net_gex == 'positive_gamma' and stock_spot_vs_trigger == 'above':
+            # 指数正γ + 个股在墙上 → 区间剧本倾向
+            if stock_iv_path in ['平', '降']:
+                adjustment += consistency_bonus
+                consistency_note.append(
+                    f"{primary_symbol}正γ且个股在墙上，IV{stock_iv_path}符合区间预期"
+                )
+            else:
+                # IV路径不配合，但不扣分
+                consistency_note.append(
+                    f"{primary_symbol}正γ但IV{stock_iv_path}，区间信号减弱"
+                )
+        
+        # ========================================
+        # 规则2：Trend 场景一致性（+1分）
+        # ========================================
+        if idx_net_gex == 'negative_gamma':
+            # 指数负γ → 趋势倾向
+            if idx_em1 > 0:
+                threshold = threshold_ratio * idx_em1
+                
+                if stock_gap_distance >= threshold:
+                    # 个股破墙距离充足
+                    # 检查 IV 路径配合
+                    iv_cooperates = (
+                        (stock_spot_vs_trigger == 'below' and stock_iv_path == '升') or
+                        (stock_spot_vs_trigger == 'above' and stock_iv_path == '降')
+                    )
+                    
+                    if iv_cooperates:
+                        adjustment += consistency_bonus
+                        consistency_note.append(
+                            f"{primary_symbol}负γ，个股破墙{stock_gap_distance:.1f}≥{threshold:.1f}"
+                            f"({threshold_ratio}×EM1_idx)，IV{stock_iv_path}配合"
+                        )
+                    else:
+                        consistency_note.append(
+                            f"{primary_symbol}负γ，个股破墙充足但IV路径{stock_iv_path}不完全配合"
+                        )
+                else:
+                    consistency_note.append(
+                        f"{primary_symbol}负γ，但个股破墙距离{stock_gap_distance:.1f}<{threshold:.1f}"
+                        f"({threshold_ratio}×EM1_idx)不足"
+                    )
+            else:
+                consistency_note.append(
+                    f"{primary_symbol}负γ但EM1_idx数据缺失，无法判断破墙充分性"
+                )
+        
+        # ========================================
+        # 规则3：方向冲突惩罚（-1分）
+        # ========================================
+        # 冲突情况1：指数负γ趋势 但 个股方向混乱
+        if idx_net_gex == 'negative_gamma' and stock_dex_same_dir < 0.5:
+            adjustment += conflict_penalty
+            consistency_note.append(
+                f"⚠️ {primary_symbol}负γ趋势信号强，但个股DEX同向仅{stock_dex_same_dir*100:.1f}%，方向冲突"
+            )
+        
+        # 冲突情况2：指数正γ区间 但 个股深陷负γ区
+        if idx_net_gex == 'positive_gamma' and stock_spot_vs_trigger == 'below':
+            if idx_em1 > 0 and stock_gap_distance > idx_em1:
+                adjustment += conflict_penalty
+                consistency_note.append(
+                    f"⚠️ {primary_symbol}正γ区间倾向，但个股在负γ区深度{stock_gap_distance:.1f}"
+                    f">{idx_em1:.1f}EM1_idx，背离明显"
+                )
+        
+        # ========================================
+        # 最终评分计算
+        # ========================================
+        final_score = max(1, min(10, base_score + adjustment))
+        
+        # 一致性等级判定
+        if adjustment > 0:
+            consistency_level = "强一致"
+        elif adjustment == 0:
+            consistency_level = "中性"
+        else:
+            consistency_level = "冲突"
+        
+        # 组装说明文本
+        full_note = f"参考{primary_symbol}背景（NET-GEX={idx_net_gex}）：" + "；".join(consistency_note)
+        
+        # 评分逻辑说明
+        rationale = f"基础5分，指数一致性调整{adjustment:+d}分（bonus={consistency_bonus}, penalty={conflict_penalty}）→ {final_score}分"
+        
+        return {
+            "score": final_score,
+            "consistency_level": consistency_level,
+            "consistency_note": full_note,
+            "rationale": rationale,
+            "primary_index": primary_symbol,
+            "index_net_gex": idx_net_gex,
+            "adjustment": adjustment
+        }

@@ -107,6 +107,8 @@ class FieldCalculator:
         # 计算 monthly_cluster_override
         targets = self._calculate_monthly_cluster_override(targets)
         
+        targets = self._calculate_indices_em1(targets)
+        
         # 验证计算结果
         validation = self._validate_calculations(targets)
         targets['_calculation_log'] = validation
@@ -268,6 +270,48 @@ class FieldCalculator:
         if value in ["N/A", "数据不足", "", "unknown"]:
             return False
         return True
+    
+    def _calculate_indices_em1(self, data: Dict) -> Dict:
+        """
+        计算所有指数的 EM1$
+        
+        公式：EM1$_idx = spot_price_idx × min(iv_7d, iv_14d) × sqrt(1/252)
+        
+        Args:
+            data: 包含 indices 字段的数据
+            
+        Returns:
+            更新后的数据（indices 中新增 em1_dollar_idx 字段）
+        """
+        indices = data.get('indices', {})
+        
+        if not isinstance(indices, dict):
+            print("⚠️ indices 不是字典类型，跳过指数 EM1$ 计算")
+            return data
+        
+        for idx_symbol, idx_data in indices.items():
+            if not isinstance(idx_data, dict):
+                continue
+            
+            spot_price_idx = idx_data.get('spot_price_idx')
+            iv_7d = idx_data.get('iv_7d')
+            iv_14d = idx_data.get('iv_14d')
+            
+            if not all([spot_price_idx, iv_7d, iv_14d]):
+                print(f"⚠️ 指数 {idx_symbol} 缺失计算参数")
+                indices[idx_symbol]['em1_dollar_idx'] = -999
+                continue
+            
+            min_iv = min(iv_7d, iv_14d)
+            em1_idx = spot_price_idx * min_iv * self.em1_sqrt_factor
+            
+            indices[idx_symbol]['em1_dollar_idx'] = round(em1_idx, 2)
+            
+            print(f"✅ {idx_symbol} EM1$: {spot_price_idx} × {min_iv:.4f} × {self.em1_sqrt_factor} = {em1_idx:.2f}")
+        
+        data['indices'] = indices
+        return data
+
 
 
 def generate_补齐指引(validation: Dict, merge_log: str, symbol: str) -> str:

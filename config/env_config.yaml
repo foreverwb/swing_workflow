@@ -175,6 +175,11 @@ scoring:
   weight_break_wall: 0.3             # 破墙可能性权重
   weight_direction: 0.2              # 方向一致性权重
   weight_iv: 0.1                     # IV动态权重
+  weight_index_consistency: 0.10     # 指数权重
+  
+  index_gap_threshold_ratio: 0.5     # 破墙距离阈值（倍数）
+  index_conflict_penalty: -1         # 方向冲突惩罚分
+  index_consistency_bonus: 1         # 一致性加分
   
   # 入场阈值
   entry_threshold_score: 3           # 总评分 ≥ 3分
@@ -239,8 +244,14 @@ aliases:
   SCORE_WEIGHT_BREAK_WALL: scoring.weight_break_wall
   SCORE_WEIGHT_DIRECTION: scoring.weight_direction
   SCORE_WEIGHT_IV: scoring.weight_iv
+  SCORE_WEIGHT_INDEX_CONSISTENCY: scoring.weight_index_consistency
   ENTRY_THRESHOLD_SCORE: scoring.entry_threshold_score
   ENTRY_THRESHOLD_PROBABILITY: scoring.entry_threshold_probability
+
+  SCORE_WEIGHT_INDEX_CONSISTENCY: scoring.weight_index_consistency
+  INDEX_GAP_THRESHOLD_RATIO: scoring.index_gap_threshold_ratio
+  INDEX_CONFLICT_PENALTY: scoring.index_conflict_penalty
+  INDEX_CONSISTENCY_BONUS: scoring.index_consistency_bonus
   
   ALPHA_VANTAGE_API_KEY: alpha_vantage.api_key
   ALPHA_VANTAGE_API_URL: alpha_vantage.api_url
