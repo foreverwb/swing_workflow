@@ -35,7 +35,9 @@ class AnalysisPipeline:
         env_vars: Dict[str, Any],
         enable_pretty_print: bool = True,
         cache_file: str = None,
-        error_handler: ErrorHandler = None  # ⭐ 新增参数
+        error_handler: ErrorHandler = None,
+        market_params: Dict = None,
+        dyn_params: Dict = None      
     ):
         """
         初始化 Pipeline
@@ -50,8 +52,10 @@ class AnalysisPipeline:
         self.cache_manager = cache_manager
         self.env_vars = env_vars
         self.enable_pretty_print = enable_pretty_print
-        self.cache_file = cache_file  # ⭐ 新增：支持指定缓存文件
-        self.error_handler = error_handler  # ⭐ 保存错误处理器
+        self.cache_file = cache_file  
+        self.error_handler = error_handler  
+        self.market_params = market_params or {}  
+        self.dyn_params = dyn_params or {}       
     
     def run(self, initial_data: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -360,6 +364,15 @@ class AnalysisPipeline:
         """步骤9：保存结果"""
         symbol = context["symbol"]
         
+        # 先保存市场参数（独立方法）
+        if self.market_params and self.dyn_params:
+            self.cache_manager.save_market_params(
+                symbol=symbol,
+                market_params=self.market_params,
+                dyn_params=self.dyn_params,
+                cache_file=self.cache_file
+            )
+        # 然后保存完整分析
         self.cache_manager.save_complete_analysis(
             symbol=symbol,
             initial_data=context["calculated_data"],
@@ -367,7 +380,9 @@ class AnalysisPipeline:
             strategies=context["strategies_result"],
             ranking=context["ranking_result"],
             report=context["final_report"],
-            cache_file=getattr(self, 'cache_file', None)  # ⭐ 传递 cache_file
+            cache_file=getattr(self, 'cache_file', None),
+            market_params=self.market_params, 
+            dyn_params=self.dyn_params          
         )
         
         if self.enable_pretty_print:

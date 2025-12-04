@@ -13,7 +13,14 @@ from .full_analysis import FullAnalysisMode
 class UpdateMode(FullAnalysisMode):
     """增量更新模式（继承完整分析模式）"""
     
-    def execute(self, symbol: str, data_folder: Path, state: Dict[str, Any]) -> Dict[str, Any]:
+    def execute(
+        self, 
+        symbol: str, 
+        data_folder: Path, 
+        state: Dict[str, Any],
+        market_params: Dict = None,
+        dyn_params: Dict = None
+    ) -> Dict[str, Any]:
         """
         执行增量更新
         
@@ -44,7 +51,7 @@ class UpdateMode(FullAnalysisMode):
         
         # 使用父类的完整分析逻辑
         # Aggregator 会自动处理增量合并
-        result = super().execute(symbol, data_folder, state)
+        result = super().execute(symbol, data_folder, state, market_params=market_params, dyn_params=dyn_params)
         
         # 更新模式标识
         if result.get("status") == "success":

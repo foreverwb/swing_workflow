@@ -28,14 +28,28 @@ class BaseCommand(ABC):
         self.console = console
         self.model_client = model_client
         self.env_vars = env_vars
-    
-    @abstractmethod
-    def execute(self, **kwargs) -> Dict[str, Any]:
-        """
-        执行命令（子类必须实现）
         
+    @abstractmethod
+    def execute(
+        self, 
+        symbol: str, 
+        data_folder: Path, 
+        state: Dict[str, Any],
+        market_params: Dict = None,  
+        dyn_params: Dict = None       
+    ) -> Dict[str, Any]:
+        """
+        执行模式 - 子类必须实现
+        
+        Args:
+            symbol: 股票代码
+            data_folder: 数据文件夹路径
+            state: 当前状态
+            market_params: 市场参数 (vix, ivr, iv30, hv20)
+            dyn_params: 动态参数 (dyn_strikes, dyn_dte_mid, ...)
+            
         Returns:
-            执行结果字典
+            执行结果
         """
         pass
     

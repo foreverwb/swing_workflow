@@ -16,13 +16,23 @@ from core.error_handler import ErrorHandler, WorkflowError, ErrorCategory, Error
 
 class FullAnalysisMode(BaseMode):
     """完整分析模式"""
-    def execute(self, symbol: str, data_folder: Path, state: Dict[str, Any]) -> Dict[str, Any]:
+    def execute(
+        self, 
+        symbol: str, 
+        data_folder: Path, 
+        state: Dict[str, Any],
+        market_params: Dict = None,
+        dyn_params: Dict = None       
+    ) -> Dict[str, Any]:
         """执行完整分析 - 增强容错"""
         logger.info(f"🎯 [完整分析模式] 开始分析 {symbol}")
         
-        # ⭐ 创建错误处理器
+        # 创建错误处理器
         error_handler = ErrorHandler(symbol)
-    
+        # 保存市场参数到实例（供后续使用）
+        self.market_params = market_params or {}
+        self.dyn_params = dyn_params or {}
+        
         try:
             # 1. 扫描图片
             error_handler.add_completed_step("扫描图片")
@@ -41,7 +51,7 @@ class FullAnalysisMode(BaseMode):
             agent3_result = self._run_agent3(symbol, images)
             error_handler.add_completed_step("完成 Agent3")
             
-            # ⭐ Agent3 特殊判断：区分"数据不完整"和"运行错误"
+            # Agent3 特殊判断：区分"数据不完整"和"运行错误"
             content = agent3_result.get("content", {})
             
             # 检查是否为空列表（常见错误）
@@ -80,7 +90,12 @@ class FullAnalysisMode(BaseMode):
             elif data_status == "ready":
                 logger.info("✅ 数据完整，开始完整分析流程")
                 error_handler.add_completed_step("数据验证通过，进入 Pipeline")
-                return self._run_full_pipeline(calculated_result, error_handler)
+                return self._run_full_pipeline(
+                    calculated_result, 
+                    error_handler,
+                    market_params=self.market_params,
+                    dyn_params=self.dyn_params
+                )
             
             else:
                 raise WorkflowError(
@@ -292,7 +307,13 @@ class FullAnalysisMode(BaseMode):
 👉 下一步: {result.get('user_guide_next_action', '')}
 """
     
-    def _run_full_pipeline(self, aggregated_result: Dict, error_handler: ErrorHandler) -> Dict[str, Any]:
+    def _run_full_pipeline(
+        self, 
+        aggregated_result: Dict, 
+        error_handler: ErrorHandler,
+        market_params: Dict = None, 
+        dyn_params: Dict = None
+    ) -> Dict[str, Any]:
         """
         运行完整分析流程
         
@@ -309,8 +330,10 @@ class FullAnalysisMode(BaseMode):
             cache_manager=self.cache_manager,
             env_vars=self.env_vars,
             enable_pretty_print=True,
-            cache_file=self.engine.cache_file,  # ⭐ 传递 cache_file
-            error_handler=error_handler  # ⭐ 传递错误处理器
+            cache_file=self.engine.cache_file,  
+            error_handler=error_handler,
+            market_params=market_params,
+            dyn_params=dyn_params
         )
         
         result = pipeline.run(aggregated_result)

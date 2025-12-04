@@ -8,12 +8,18 @@ from typing import Dict, Any
 from loguru import logger
 
 from .full_analysis import FullAnalysisMode
-
+from code_nodes.field_calculator import main as calculator_main
 
 class RefreshMode(FullAnalysisMode):
     """刷新快照模式（继承完整分析模式）"""
     
-    def execute(self, symbol: str, data_folder: Path, state: Dict[str, Any]) -> Dict[str, Any]:
+    def execute(
+        self, 
+        symbol: str, 
+        data_folder: Path, 
+        market_params: Dict = None,
+        dyn_params: Dict = None
+    ) -> Dict[str, Any]:
         """
         执行刷新快照
         
@@ -73,7 +79,16 @@ class RefreshMode(FullAnalysisMode):
                 cache_file_name=self.engine.cache_file
             )
             
-            # 6. 生成摘要
+            # 6 可选：如果提供了市场参数，也更新到缓存
+            if market_params and dyn_params:
+                self.cache_manager.save_market_params(
+                    symbol=symbol,
+                    market_params=market_params,
+                    dyn_params=dyn_params,
+                    cache_file=self.engine.cache_file
+                )
+            
+            # 7. 生成摘要
             snapshot = snapshot_result.get("snapshot", {})
             summary = self._generate_snapshot_summary(snapshot)
             
@@ -109,7 +124,6 @@ class RefreshMode(FullAnalysisMode):
         Returns:
             计算后的数据
         """
-        from code_nodes.field_calculator import main as calculator_main
         
         logger.info("🔧 [Refresh] 计算衍生字段（跳过 Aggregator）")
         

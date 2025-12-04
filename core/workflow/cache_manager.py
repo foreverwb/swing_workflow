@@ -109,7 +109,9 @@ class CacheManager:
         ranking: Dict,
         report: str,
         start_date: str = None,
-        cache_file: str = None
+        cache_file: str = None,
+        market_params: Dict = None, 
+        dyn_params: Dict = None,     
     ):
         """
         保存完整分析结果到 source_target
@@ -123,6 +125,8 @@ class CacheManager:
             report: 最终报告
             start_date: 分析开始日期（YYYYMMDD）
             cache_file: 指定缓存文件名（如 NVDA_20251127.json）
+            market_params: 市场参数 
+            dyn_params: 动态参数 
         """
         # ⭐ 验证 symbol
         if not symbol or symbol.upper() == "UNKNOWN":
@@ -164,6 +168,27 @@ class CacheManager:
                 "start_date": datetime.strptime(start_date, "%Y%m%d").strftime("%Y-%m-%d"),
                 "created_at": datetime.now().isoformat()
             }
+        if market_params and dyn_params:
+            cached["market_params"] = {
+                "vix": market_params.get("vix"),
+                "ivr": market_params.get("ivr"),
+                "iv30": market_params.get("iv30"),
+                "hv20": market_params.get("hv20"),
+                "vrp": market_params.get("iv30", 0) / market_params.get("hv20", 1) if market_params.get("hv20", 0) > 0 else 0,
+                "updated_at": datetime.now().isoformat()
+            }
+            
+            cached["dyn_params"] = {
+                "dyn_strikes": dyn_params.get("dyn_strikes"),
+                "dyn_dte_short": dyn_params.get("dyn_dte_short"),
+                "dyn_dte_mid": dyn_params.get("dyn_dte_mid"),
+                "dyn_dte_long_backup": dyn_params.get("dyn_dte_long_backup"),
+                "dyn_window": dyn_params.get("dyn_window"),
+                # "scenario": dyn_params.get("scenario"),
+                "updated_at": datetime.now().isoformat()
+            }
+            
+            logger.info(f"✅ 市场参数已写入缓存 | 场景: {dyn_params.get('scenario')}")
         
         # 写入 source_target
         cached["source_target"] = {
@@ -178,8 +203,18 @@ class CacheManager:
         cached["last_updated"] = datetime.now().isoformat()
         
         # 保存缓存
-        self._save_cache(cache_path, cached)
-        logger.success(f"✅ 完整分析结果已保存: {cache_path}")
+        try:
+            with open(cache_path, 'w', encoding='utf-8') as f:
+                json.dump(cached, f, ensure_ascii=False, indent=2)
+        
+            logger.success(f"✅ 完整分析结果已保存: {cache_path}")
+            logger.info(f"  • 文件大小: {cache_path.stat().st_size / 1024:.2f} KB")
+            logger.info(f"  • source_target: 已填充")
+            logger.info(f"  • market_params: {'已保存' if market_params else '继承缓存'}")
+            
+        except Exception as e:
+            logger.error(f"❌ 保存失败: {e}")
+            raise
     
     def add_backtest_record(self, symbol: str, record: Dict[str, Any], start_date: str = None):
         """
@@ -504,3 +539,251 @@ class CacheManager:
             else:
                 return None
         return value if value != -999 else None
+    
+    def save_market_params(
+        self,
+        symbol: str,
+        market_params: Dict[str, float],
+        dyn_params: Dict[str, Any],
+        start_date: str = None,
+        cache_file: str = None
+    ) -> Path:
+        """
+        保存市场参数和动态参数到缓存文件
+        
+        Args:
+            symbol: 股票代码
+            market_params: 市场参数 (vix, ivr, iv30, hv20)
+            dyn_params: 动态参数 (dyn_strikes, dyn_dte_short, ...)
+            start_date: 分析开始日期（YYYYMMDD）
+            cache_file: 指定缓存文件名（如 NVDA_20251127.json）
+        
+        Returns:
+            缓存文件路径
+        """
+        # 验证 symbol
+        if not symbol or symbol.upper() == "UNKNOWN":
+            logger.error(f"无效的 symbol: '{symbol}'，跳过保存市场参数")
+            return None
+        
+        symbol = symbol.upper()
+        
+        if not start_date:
+            start_date = datetime.now().strftime("%Y%m%d")
+        
+        # 确定缓存路径
+        if cache_file:
+            match = re.match(r'(\w+)_(\d{8})\.json', cache_file)
+            if match:
+                start_date = match.group(2)
+            
+            symbol_dir = self.output_dir / symbol
+            date_dir = symbol_dir / start_date
+            
+            if not date_dir.exists():
+                logger.debug(f"📁 创建缓存目录: {date_dir}")
+                date_dir.mkdir(parents=True, exist_ok=True)
+            
+            cache_path = date_dir / cache_file
+        else:
+            cache_path = self._get_output_filename(symbol, start_date)
+        
+        # 加载现有缓存
+        if cache_path.exists():
+            with open(cache_path, 'r', encoding='utf-8') as f:
+                cached = json.load(f)
+        else:
+            # 创建新缓存
+            cached = {
+                "symbol": symbol,
+                "start_date": datetime.strptime(start_date, "%Y%m%d").strftime("%Y-%m-%d"),
+                "created_at": datetime.now().isoformat()
+            }
+        
+        cached["market_params"] = {
+            "vix": market_params.get("vix"),
+            "ivr": market_params.get("ivr"),
+            "iv30": market_params.get("iv30"),
+            "hv20": market_params.get("hv20"),
+            "vrp": market_params.get("iv30", 0) / market_params.get("hv20", 1) if market_params.get("hv20", 0) > 0 else 0,
+            "updated_at": datetime.now().isoformat()
+        }
+        
+        cached["dyn_params"] = {
+            "dyn_strikes": dyn_params.get("dyn_strikes"),
+            "dyn_dte_short": dyn_params.get("dyn_dte_short"),
+            "dyn_dte_mid": dyn_params.get("dyn_dte_mid"),
+            "dyn_dte_long_backup": dyn_params.get("dyn_dte_long_backup"),
+            "dyn_window": dyn_params.get("dyn_window"),
+            "scenario": dyn_params.get("scenario"),
+            "updated_at": datetime.now().isoformat()
+        }
+        
+        cached["last_updated"] = datetime.now().isoformat()
+        
+        # 保存缓存
+        with open(cache_path, 'w', encoding='utf-8') as f:
+            json.dump(cached, f, ensure_ascii=False, indent=2)
+        
+        logger.success(f"✅ 市场参数已保存: {cache_path}")
+        logger.info(f"   场景: {dyn_params.get('scenario')}")
+        logger.info(f"   VRP: {cached['market_params']['vrp']:.2f}")
+        
+        return cache_path
+    
+    def load_market_params(self, symbol: str, start_date: str = None) -> Optional[Dict]:
+        """
+        加载市场参数
+        
+        Args:
+            symbol: 股票代码
+            start_date: 分析开始日期（YYYYMMDD），不指定则查找最新
+        
+        Returns:
+            包含 market_params 和 dyn_params 的字典，不存在返回 None
+        """
+        cache_path = self._get_output_filename(symbol, start_date)
+        
+        if not cache_path.exists():
+            logger.warning(f"缓存文件不存在: {cache_path}")
+            return None
+        
+        try:
+            with open(cache_path, 'r', encoding='utf-8') as f:
+                cached = json.load(f)
+            
+            if "market_params" not in cached or "dyn_params" not in cached:
+                logger.warning(f"缓存文件缺少市场参数字段")
+                return None
+            
+            return {
+                "market_params": cached["market_params"],
+                "dyn_params": cached["dyn_params"]
+            }
+        
+        except Exception as e:
+            logger.error(f"加载市场参数失败: {e}")
+            return None
+        
+    def update_market_params_if_changed(
+        self, 
+        new_market_params: Dict[str, Any], 
+        new_dyn_params: Dict[str, Any]
+    ) -> bool:
+        """
+        仅当参数发生变化时更新缓存
+        
+        Args:
+            new_market_params: 新的市场参数
+            new_dyn_params: 新的动态参数
+            
+        Returns:
+            bool: 是否发生了更新
+        """
+        try:
+            old_market, old_dyn = self.load_market_params()
+            
+            # 如果不存在旧参数或参数发生变化，则更新
+            if old_market != new_market_params or old_dyn != new_dyn_params:
+                self.save_market_params(new_market_params, new_dyn_params)
+                logger.info("市场参数已更新（检测到变化）")
+                return True
+            
+            logger.debug("市场参数未变化，跳过更新")
+            return False
+            
+        except Exception as e:
+            logger.error(f"更新市场参数失败: {e}")
+            return False
+        
+
+    def initialize_cache_with_params(
+        self,
+        symbol: str,
+        market_params: Dict[str, float],
+        dyn_params: Dict[str, Any],
+        start_date: str = None
+    ) -> Path:
+        """
+        初始化缓存文件（仅市场参数 + 空占位符）
+        用于 Agent2 命令清单生成后创建缓存骨架
+        
+        Args:
+            symbol: 股票代码
+            market_params: 市场参数 (vix, ivr, iv30, hv20)
+            dyn_params: 动态参数 (dyn_strikes, dyn_dte_mid, ...)
+            start_date: 分析开始日期（YYYYMMDD），默认今天
+            
+        Returns:
+            缓存文件路径
+        """
+        # 验证 symbol
+        if not symbol or symbol.upper() == "UNKNOWN":
+            logger.error(f"❌ 无效的 symbol: '{symbol}'，跳过初始化缓存")
+            return None
+        
+        symbol = symbol.upper()
+        
+        if not start_date:
+            start_date = datetime.now().strftime("%Y%m%d")
+        
+        # 构造缓存路径
+        cache_path = self._get_output_filename(symbol, start_date)
+        
+        # 检查文件是否已存在
+        if cache_path.exists():
+            logger.warning(f"⚠️ 缓存文件已存在，跳过初始化: {cache_path}")
+            return cache_path
+        
+        # 创建初始缓存结构
+        cache_data = {
+            "symbol": symbol,
+            "start_date": datetime.strptime(start_date, "%Y%m%d").strftime("%Y-%m-%d"),
+            "created_at": datetime.now().isoformat(),
+            
+            # ✅ 市场参数
+            "market_params": {
+                "vix": market_params.get("vix"),
+                "ivr": market_params.get("ivr"),
+                "iv30": market_params.get("iv30"),
+                "hv20": market_params.get("hv20"),
+                "vrp": market_params.get("iv30", 0) / market_params.get("hv20", 1) if market_params.get("hv20", 0) > 0 else 0,
+                "updated_at": datetime.now().isoformat()
+            },
+            
+            # ✅ 动态参数
+            "dyn_params": {
+                "dyn_strikes": dyn_params.get("dyn_strikes"),
+                "dyn_dte_short": dyn_params.get("dyn_dte_short"),
+                "dyn_dte_mid": dyn_params.get("dyn_dte_mid"),
+                "dyn_dte_long_backup": dyn_params.get("dyn_dte_long_backup"),
+                "dyn_window": dyn_params.get("dyn_window"),
+                "scenario": dyn_params.get("scenario"),
+                "updated_at": datetime.now().isoformat()
+            },
+            
+            # ✅ 空占位符（等待后续填充）
+            "source_target": {},
+            "snapshots_1": {},
+            
+            "last_updated": datetime.now().isoformat()
+        }
+        
+        # 保存文件
+        try:
+            # 确保目录存在
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            with open(cache_path, 'w', encoding='utf-8') as f:
+                json.dump(cache_data, f, ensure_ascii=False, indent=2)
+            
+            logger.success(f"✅ 初始化缓存已创建: {cache_path}")
+            logger.info(f"  • 场景: {dyn_params.get('scenario')}")
+            logger.info(f"  • VRP: {cache_data['market_params']['vrp']:.2f}")
+            logger.info(f"  • 文件大小: {cache_path.stat().st_size / 1024:.2f} KB")
+            
+            return cache_path
+        
+        except Exception as e:
+            logger.error(f"❌ 初始化缓存失败: {e}")
+            return None

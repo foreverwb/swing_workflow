@@ -1,6 +1,10 @@
 ### 1. cmd list
 ```
-python app.py analyze -s {SYMBOL}
+python app.py analyze -s {SYMBOL} /
+    --vix {.vix} /
+    --ivr {iv rank} /
+    --iv30 {iv30} 
+    --hv20 {hv20}
 ```
 
 ### 2. full analyze

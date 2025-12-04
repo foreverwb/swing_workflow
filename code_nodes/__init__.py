@@ -5,6 +5,7 @@ from .code3_strategy_calc import main as strategy_calc_main
 from .code4_comparison import main as comparison_main
 from .code_aggregator import main as aggregator_main
 from .field_calculator import main as calculator_main
+from .pre_calculator import MarketStateCalculator
 
 __all__ = [
     'event_detection_main',
@@ -12,5 +13,6 @@ __all__ = [
     'strategy_calc_main',
     'comparison_main',
     'aggregator_main',
-    'calculator_main'
+    'calculator_main',
+    'MarketStateCalculator'
 ]
