@@ -1,6 +1,5 @@
 """
-Analyze 命令处理器
-处理完整分析和增量更新
+Analyze 命令处理器 - 集成市场状态计算
 """
 
 import sys
@@ -8,15 +7,17 @@ from pathlib import Path
 from typing import Dict, Any
 from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn
+from loguru import logger
 
 import prompts
-from .base import BaseCommand
+from commands.base import BaseCommand
 from core.workflow import AgentExecutor
+from code_nodes.pre_calculator import MarketStateCalculator
 from utils.console_printer import print_error_summary
 
 
 class AnalyzeCommand(BaseCommand):
-    """Analyze 命令处理器"""
+    """Analyze 命令处理器（扩展版）"""
     
     def execute(
         self,
@@ -25,7 +26,7 @@ class AnalyzeCommand(BaseCommand):
         output: str = None,
         mode: str = 'full',
         cache: str = None,
-        **kwargs
+        **kwargs  #接收额外参数（包括 market_params）
     ) -> Dict[str, Any]:
         """
         执行分析命令
@@ -36,25 +37,69 @@ class AnalyzeCommand(BaseCommand):
             output: 输出文件路径
             mode: 运行模式（full/update）
             cache: 缓存文件名
+            **kwargs: 额外参数
+                - market_params: Dict[str, float] (vix, ivr, iv30, hv20)
         """
         # 1. 验证股票代码
         is_valid, result = self.validate_symbol(symbol)
         if not is_valid:
             self.print_error(result)
-            self.console.print("[yellow]💡 示例: python app.py analyze -s AAPL -f data/uploads/AAPL[/yellow]")
+            self.console.print("[yellow]💡 示例: python app.py analyze -s AAPL --vix 18.5 --ivr 50 --iv30 30 --hv20 25[/yellow]")
             sys.exit(1)
         
-        # 2. 判断模式
+        #2. 提取并验证市场参数
+        market_params = kwargs.get('market_params')
+        
+        if not market_params:
+            self.print_error("缺少必需的市场参数 (vix, ivr, iv30, hv20)")
+            self.console.print("[yellow]💡 请使用 --vix, --ivr, --iv30, --hv20 参数[/yellow]")
+            sys.exit(1)
+        
+        try:
+            # 验证参数合法性
+            MarketStateCalculator.validate_params(market_params)
+            
+            # 计算动态参数
+            pre_calc_params = MarketStateCalculator.calculate_fetch_params(
+                vix=market_params['vix'],
+                ivr=market_params['ivr'],
+                iv30=market_params['iv30'],
+                hv20=market_params['hv20']
+            )
+            
+            logger.info(f"✅ 市场状态计算完成: {pre_calc_params['scenario']}")
+            
+        except ValueError as e:
+            self.print_error(f"市场参数验证失败: {e}")
+            sys.exit(1)
+        
+        # 3. 判断模式
         if not folder:
-            return self._generate_command_list(symbol)
+            # 模式A: 生成命令清单（Agent2）
+            return self._generate_command_list(symbol, pre_calc_params)
         else:
-            return self._full_analysis(symbol, folder, output, mode, cache)
+            # 模式B: 完整分析
+            return self._full_analysis(
+                symbol=symbol,
+                folder=folder,
+                output=output,
+                mode=mode,
+                cache=cache,
+                pre_calc=pre_calc_params  #传递动态参数
+            )
     
-    def _generate_command_list(self, symbol: str) -> Dict[str, Any]:
-        """生成命令清单（Agent2）"""
+    def _generate_command_list(self, symbol: str, pre_calc: Dict) -> Dict[str, Any]:
+        """
+        生成命令清单（Agent2）
+        
+        Args:
+            symbol: 股票代码
+            pre_calc: MarketStateCalculator 计算的动态参数
+        """
         self.console.print(Panel.fit(
             f"[bold green]📋 生成命令清单: {symbol.upper()}[/bold green]\n"
-            f"[dim]未提供数据文件夹，将生成期权数据抓取命令[/dim]",
+            f"[dim]市场场景: {pre_calc['scenario']}[/dim]\n"
+            f"[dim]动态参数: Strikes={pre_calc['dyn_strikes']} DTE={pre_calc['dyn_dte_mid']} Window={pre_calc['dyn_window']}[/dim]",
             border_style="green"
         ))
         
@@ -67,18 +112,31 @@ class AnalyzeCommand(BaseCommand):
             enable_pretty_print=True
         )
         
-        self.console.print(f"\n[green]🚀 开始生成 {symbol.upper()} 的命令清单[/green]\n")
+        self.console.print(f"\n[green]🚀 开始生成 {symbol.upper()} 的动态命令清单[/green]\n")
         
         try:
+            from prompts.agent2_cmdlist import get_system_prompt, get_user_prompt
             # 构建消息
+            # messages = [
+            #     {
+            #         "role": "system",
+            #         "content": prompts.agent2_cmdlist.get_system_prompt(self.env_vars, pre_calc)
+            #     },
+            #     {
+            #         "role": "user",
+            #         "content": prompts.agent2_cmdlist.get_user_prompt(symbol.upper())
+            #     }
+            # ]
+            sys_prompt = get_system_prompt(symbol=symbol.upper(), pre_calc=pre_calc)
+            user_prompt = get_user_prompt(symbol=symbol.upper())
             messages = [
                 {
                     "role": "system",
-                    "content": prompts.agent2_cmdlist.get_system_prompt(self.env_vars)
+                    "content": sys_prompt
                 },
                 {
                     "role": "user",
-                    "content": prompts.agent2_cmdlist.get_user_prompt(symbol.upper())
+                    "content": user_prompt
                 }
             ]
             
@@ -92,24 +150,24 @@ class AnalyzeCommand(BaseCommand):
                 response = agent_executor.execute_agent(
                     agent_name="agent2",
                     messages=messages,
-                    description=f"为 {symbol.upper()} 生成命令清单"
+                    description=f"为 {symbol.upper()} 生成动态命令清单"
                 )
                 
                 progress.update(task, completed=True)
             
             content = response.get("content", "")
             
-            self.console.print("\n[green]✅ 命令清单生成完成![/green]\n")
+            self.console.print("\n[green]✅ 动态命令清单生成完成![/green]\n")
             self.console.print(Panel(
                 content,
-                title=f"📋 {symbol.upper()} 数据抓取命令清单",
+                title=f"📋 {symbol.upper()} 数据抓取命令清单 (基于 {pre_calc['scenario']})",
                 border_style="green"
             ))
             
             self.console.print(f"\n[yellow]💡 下一步: 根据命令清单抓取数据后，执行:[/yellow]")
-            self.console.print(f"[cyan]   python app.py analyze -s {symbol.upper()} -f <数据文件夹路径>[/cyan]")
+            self.console.print(f"[cyan]   python app.py analyze -s {symbol.upper()} -f <数据文件夹路径> --vix {pre_calc.get('vrp', 1.0)*25} --ivr 50 --iv30 30 --hv20 25[/cyan]")
             
-            return {"status": "success", "content": content}
+            return {"status": "success", "content": content, "pre_calc": pre_calc}
         
         except Exception as e:
             self.print_error(str(e))
@@ -121,15 +179,25 @@ class AnalyzeCommand(BaseCommand):
         folder: str,
         output: str,
         mode: str,
-        cache: str
+        cache: str,
+        pre_calc: Dict  #新增参数
     ) -> Dict[str, Any]:
-        """执行完整分析"""
+        """
+        执行完整分析
+        
+        Args:
+            symbol: 股票代码
+            folder: 数据文件夹路径
+            output: 输出文件路径
+            mode: 运行模式
+            cache: 缓存文件名
+            pre_calc: 动态参数字典
+        """
         # 验证参数
         if mode == 'update' and not cache:
             self.print_error("update 模式必须指定 --cache 参数")
             self.console.print(f"[yellow]💡 示例:[/yellow]")
-            self.console.print(f"[cyan]   python app.py analyze -s {symbol.upper()} -f {folder} --mode update --cache {symbol.upper()}_20251129.json[/cyan]")
-            self.console.print(f"\n[dim]提示: 可用的缓存文件位于 data/output/{symbol.upper()}/ 目录下[/dim]")
+            self.console.print(f"[cyan]   python app.py analyze -s {symbol.upper()} -f {folder} --mode update --cache {symbol.upper()}_20251129.json --vix 18.5 --ivr 50 --iv30 30 --hv20 25[/cyan]")
             sys.exit(1)
         
         # 验证缓存文件
@@ -148,7 +216,8 @@ class AnalyzeCommand(BaseCommand):
         mode_desc = "完整分析" if mode == "full" else "增量补齐"
         self.console.print(Panel.fit(
             f"[bold blue]Swing Quant Workflow[/bold blue]\n"
-            f"[dim]期权分析策略系统 - {mode_desc}[/dim]",
+            f"[dim]期权分析策略系统 - {mode_desc}[/dim]\n"
+            f"[dim]市场场景: {pre_calc['scenario']}[/dim]",
             border_style="blue"
         ))
         
@@ -174,10 +243,12 @@ class AnalyzeCommand(BaseCommand):
             ) as progress:
                 task = progress.add_task("正在分析...", total=None)
                 
+                #传递 pre_calc 参数
                 result = engine.run(
                     symbol=symbol.upper(),
                     data_folder=folder_path,
-                    mode=mode
+                    mode=mode,
+                    pre_calc=pre_calc  #关键改动
                 )
                 
                 progress.update(task, completed=True)
@@ -223,6 +294,12 @@ class AnalyzeCommand(BaseCommand):
                     f.write(result.get("report", ""))
                 
                 self.console.print(f"\n[dim]报告已保存至: {output_path}[/dim]")
+            
+            #显示市场状态信息
+            if "pre_calc" in result:
+                pre_calc = result["pre_calc"]
+                self.console.print(f"\n[cyan]📊 市场状态: {pre_calc.get('scenario')}[/cyan]")
+                self.console.print(f"[dim]   VRP={pre_calc.get('vrp', 0):.2f} | Strikes={pre_calc.get('dyn_strikes')} | DTE={pre_calc.get('dyn_dte_mid')}[/dim]")
             
             # 显示事件风险
             event_risk = result.get("event_risk", {})

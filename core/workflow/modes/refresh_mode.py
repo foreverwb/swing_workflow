@@ -8,7 +8,7 @@ from typing import Dict, Any
 from loguru import logger
 
 from .full_analysis import FullAnalysisMode
-
+from code_nodes.field_calculator import main as calculator_main
 
 class RefreshMode(FullAnalysisMode):
     """刷新快照模式（继承完整分析模式）"""
@@ -109,7 +109,6 @@ class RefreshMode(FullAnalysisMode):
         Returns:
             计算后的数据
         """
-        from code_nodes.field_calculator import main as calculator_main
         
         logger.info("🔧 [Refresh] 计算衍生字段（跳过 Aggregator）")
         
