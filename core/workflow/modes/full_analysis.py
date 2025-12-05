@@ -180,12 +180,86 @@ class FullAnalysisMode(BaseMode):
         handler.log_request(symbol, inputs, valid_img_count)
         
         # 调用 API
-        response = self.agent_executor.execute_vision_agent(
-            agent_name="agent3",
-            inputs=inputs,
-            json_schema=schemas.agent3_schema.get_schema()
-        )
-        print("<<<<<<<<<<<<<<<<< Agent3 response >>>>>>>>>>>", json.dumps(response))
+        # response = self.agent_executor.execute_vision_agent(
+        #     agent_name="agent3",
+        #     inputs=inputs,
+        #     json_schema=schemas.agent3_schema.get_schema()
+        # )
+        response = {
+  "content": {
+    "timestamp": "2025-11-30T08:00:34",
+    "indices": {
+      "QQQ": {
+        "iv_14d": 0.18,
+        "iv_7d": 0.16,
+        "net_gex_idx": "positive_gamma",
+        "spot_price_idx": 619.12
+      },
+      "SPX": {
+        "iv_7d": 0.115,
+        "net_gex_idx": "positive_gamma",
+        "spot_price_idx": 4700.0,
+        "iv_14d": 0.117
+      }
+    },
+    "targets": {
+      "atm_iv": {
+        "iv_14d": 0.4,
+        "iv_7d": 0.38,
+        "iv_source": "7d"
+      },
+      "directional_metrics": {
+        "dex_same_dir_pct": 0.63,
+        "iv_path": "升",
+        "iv_path_confidence": "high",
+        "vanna_confidence": "medium",
+        "vanna_dir": "up"
+      },
+      "gamma_metrics": {
+        "weekly_data": {
+          "cluster_strength": {
+            "price": 180.0,
+            "abs_gex": 40.0
+          }
+        },
+        "gap_distance_dollar": 5.0,
+        "monthly_data": {
+          "cluster_strength": {
+            "abs_gex": 70.86,
+            "price": 180.0
+          }
+        },
+        "nearby_peak": {
+          "abs_gex": 20.0,
+          "price": 175.0
+        },
+        "net_gex": "positive_gamma",
+        "next_cluster_peak": {
+          "abs_gex": 30.0,
+          "price": 185.0
+        },
+        "spot_vs_trigger": "above",
+        "vol_trigger": 172.5
+      },
+      "spot_price": 176.63,
+      "symbol": "NVDA",
+      "walls": {
+        "put_wall": 170.0,
+        "call_wall": 185.0,
+        "major_wall": 180.0,
+        "major_wall_type": "call"
+      }
+    }
+  },
+  "usage": {
+    "input_tokens": 17651,
+    "output_tokens": 316
+  },
+  "model": "gpt-4o-2024-08-06",
+  "agent_name": "agent3",
+  "provider": "openai"
+}
+        # print("<<<<<<<<<<<<<<<<< Agent3 response >>>>>>>>>>>", json.dumps(response))
         # 解析响应
         raw_content = response.get("content", {})
         

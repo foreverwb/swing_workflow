@@ -6,6 +6,7 @@ import re
 from typing import Tuple
 from datetime import datetime
 from pathlib import Path
+import json
 
 def validate_symbol(symbol: str) -> Tuple[bool, str]:
     """

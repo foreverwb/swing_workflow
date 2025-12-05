@@ -11,10 +11,11 @@ from pathlib import Path
 class FieldCalculator:
     """字段关联计算器（修复版）"""
     
-    def __init__(self, env_vars: Dict[str, Any]):
+    def __init__(self, env_vars: Dict[str, Any], market_params: Dict[str, float] = None):
         self.em1_sqrt_factor = env_vars.get('EM1_SQRT_FACTOR', 0.06299)
         self.monthly_cluster_ratio = env_vars.get('MONTHLY_CLUSTER_STRENGTH_RATIO', 1.5)
-    
+        self.market_params = market_params or {} 
+        
     def validate_raw_fields(self, data: Dict) -> Dict:
         """验证原始字段完整性（23个）"""
         targets = data.get('targets', {})
@@ -117,7 +118,15 @@ class FieldCalculator:
         return data
     
     def _calculate_em1_dollar(self, targets: Dict) -> Dict:
-        """计算 EM1$ = spot_price × min(ATM_IV_7D, ATM_IV_14D) × sqrt(1/252)"""
+        """
+        计算 EM1$ = Raw_EM1$ × Lambda
+        
+        公式：
+        1. Raw_EM1$ = spot_price × min(iv_7d, iv_14d) × sqrt(1/252)
+        2. Lambda = 1.0 + k_sys × max(0, (VIX - VIX_base)/100) 
+                        + k_idiosync × max(0, (IVR_floor - IVR)/100)
+        3. Adjusted_EM1$ = Raw_EM1$ × Lambda
+        """
         spot_price = targets.get('spot_price')
         atm_iv = targets.get('atm_iv', {})
         iv_7d = atm_iv.get('iv_7d')
@@ -127,13 +136,39 @@ class FieldCalculator:
             print(f"⚠️ EM1$ 计算缺失输入: spot={spot_price}, iv_7d={iv_7d}, iv_14d={iv_14d}")
             targets['em1_dollar'] = -999
             return targets
-        
+        # Step 1: 计算物理锚点 (Raw_EM1$)
         min_iv = min(iv_7d, iv_14d)
-        em1_dollar = spot_price * min_iv * self.em1_sqrt_factor
+        raw_em1 = spot_price * min_iv * self.em1_sqrt_factor
+        # Step 2: 计算 Lambda 扩展系数
+        # 从配置读取 Lambda 参数
+        k_sys = self.env['lambda_k_sys']
+        k_idiosync = self.env['lambda_k_idiosync']
+        vix_base = self.env['lambda_vix_base']
+        ivr_floor = self.env['lambda_ivr_floor']
         
+        market_params = self.market_params  # ⭐ 新增：从实例变量获取
+        vix_curr = market_params.get('vix', vix_base)
+        ivr_curr = market_params.get('ivr', ivr_floor)
+        
+        # VIX 部分：系统性溢价
+        vix_premium = k_sys * max(0, (vix_curr - vix_base) / 100)
+        
+        # IVR 部分：低波防爆补偿
+        ivr_premium = k_idiosync * max(0, (ivr_floor - ivr_curr) / 100)
+    
+        # 汇总 Lambda
+        lambda_factor = 1.0 + vix_premium + ivr_premium
+        # Step 3: 最终 EM1$（调整后）
+        em1_dollar = raw_em1 * lambda_factor
         targets['em1_dollar'] = round(em1_dollar, 2)
         
-        print(f"✅ EM1$ 计算完成: {spot_price} × {min_iv:.4f} × {self.em1_sqrt_factor} = {em1_dollar:.2f}")
+        print(f"✅ EM1$ 计算完成:")
+        print(f"   [物理锚点] Raw_EM1$ = {spot_price} × {min_iv:.4f} × {self.em1_sqrt_factor} = ${raw_em1:.2f}")
+        print(f"   [Lambda 系数]")
+        print(f"      • VIX 溢价: {k_sys} × max(0, ({vix_curr} - {vix_base})/100) = {vix_premium:.3f}")
+        print(f"      • IVR 补偿: {k_idiosync} × max(0, ({ivr_floor} - {ivr_curr})/100) = {ivr_premium:.3f}")
+        print(f"      • Lambda = 1.0 + {vix_premium:.3f} + {ivr_premium:.3f} = {lambda_factor:.3f}")
+        print(f"   [最终结果] Adjusted_EM1$ = {raw_em1:.2f} × {lambda_factor:.3f} = ${em1_dollar:.2f}")
         
         return targets
     
@@ -421,8 +456,9 @@ def main(aggregated_data: dict, symbol: str, **env_vars) -> dict:
         else:
             print(f"  ❌ 未找到 targets 字段")
         
+        market_params = env_vars.get('market_params', {})
         # 创建计算器
-        calculator = FieldCalculator(env_vars)
+        calculator = FieldCalculator(env_vars, market_params=market_params)
         
         # 1. 验证原始字段
         print("\n🔍 开始验证原始字段完整性...")

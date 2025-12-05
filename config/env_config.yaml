@@ -25,6 +25,11 @@ gamma:
   # 墙识别参数
   wall_cluster_width: 3              # 簇宽度 ≥ 3 个相邻行权价
   wall_peak_multiplier: 2.0          # 局部峰 ≥ 相邻γ中位数 2 倍
+  # Lambda 扩展系数参数
+  lambda_k_sys: 0.5              # 系统性溢价系数
+  lambda_k_idiosync: 0.5         # 特质性补偿系数
+  lambda_vix_base: 15.0          # VIX 长期中枢
+  lambda_ivr_floor: 30.0         # IVR 低波防爆阈值
 
 # ======================================
 # 2. 方向信号阈值
