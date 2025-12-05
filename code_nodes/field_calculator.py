@@ -1,26 +1,35 @@
 """
-FieldCalculator - 字段关联计算引擎（修复版）
+FieldCalculator - 字段关联计算引擎（重构版）
+特性：
+1. 配置对象化访问（无需硬编码键名）
+2. 实现 Lambda 扩展系数计算
+3. 删除冗余的 _parse_env_vars 方法
 """
 
 import json
-from typing import Dict, Any, List
+from typing import Dict, Any
 from datetime import datetime
-from pathlib import Path
-
+from utils.config_loader import config
 
 class FieldCalculator:
-    """字段关联计算器（修复版）"""
+    """字段关联计算器（重构版）"""
     
-    def __init__(self, env_vars: Dict[str, Any], market_params: Dict[str, float] = None):
-        self.em1_sqrt_factor = env_vars.get('EM1_SQRT_FACTOR', 0.06299)
-        self.monthly_cluster_ratio = env_vars.get('MONTHLY_CLUSTER_STRENGTH_RATIO', 1.5)
-        self.market_params = market_params or {} 
+    def __init__(self, config_loader, market_params: Dict[str, float] = None):
+        """
+        初始化计算器
         
+        Args:
+            config_loader: ConfigLoader 实例
+            market_params: 市场参数 (vix, ivr, iv30, hv20)
+        """
+        # ⭐ 一次性获取所有 gamma 配置
+        self.gamma_config = config_loader.get_section('gamma')
+        self.market_params = market_params or {}
+    
     def validate_raw_fields(self, data: Dict) -> Dict:
         """验证原始字段完整性（23个）"""
         targets = data.get('targets', {})
         
-        # ✅ 修复：处理 targets 可能是字符串的情况
         if isinstance(targets, str):
             try:
                 targets = json.loads(targets)
@@ -87,8 +96,7 @@ class FieldCalculator:
         }
     
     def calculate_all(self, data: Dict) -> Dict:
-        """计算所有衍生字段（3个）"""
-        # ✅ 修复：确保 targets 是字典
+        """计算所有衍生字段（3个 + 指数）"""
         targets = data.get('targets', {})
         if isinstance(targets, str):
             try:
@@ -96,7 +104,7 @@ class FieldCalculator:
             except json.JSONDecodeError:
                 targets = {}
         
-        # 计算 em1_dollar
+        # 计算 em1_dollar（包含 Lambda 调整）
         targets = self._calculate_em1_dollar(targets)
         
         # 计算 gap_distance_em1_multiple
@@ -108,6 +116,7 @@ class FieldCalculator:
         # 计算 monthly_cluster_override
         targets = self._calculate_monthly_cluster_override(targets)
         
+        # 计算指数 EM1$
         targets = self._calculate_indices_em1(targets)
         
         # 验证计算结果
@@ -136,39 +145,52 @@ class FieldCalculator:
             print(f"⚠️ EM1$ 计算缺失输入: spot={spot_price}, iv_7d={iv_7d}, iv_14d={iv_14d}")
             targets['em1_dollar'] = -999
             return targets
-        # Step 1: 计算物理锚点 (Raw_EM1$)
-        min_iv = min(iv_7d, iv_14d)
-        raw_em1 = spot_price * min_iv * self.em1_sqrt_factor
-        # Step 2: 计算 Lambda 扩展系数
-        # 从配置读取 Lambda 参数
-        k_sys = self.env['lambda_k_sys']
-        k_idiosync = self.env['lambda_k_idiosync']
-        vix_base = self.env['lambda_vix_base']
-        ivr_floor = self.env['lambda_ivr_floor']
         
-        market_params = self.market_params  # ⭐ 新增：从实例变量获取
-        vix_curr = market_params.get('vix', vix_base)
-        ivr_curr = market_params.get('ivr', ivr_floor)
+        
+        # Step 1: 计算物理锚点 (Raw_EM1$)
+        
+        min_iv = min(iv_7d, iv_14d)
+        # ⭐ 从配置对象读取
+        em1_sqrt_factor = self.gamma_config.em1_sqrt_factor
+        raw_em1 = spot_price * min_iv * em1_sqrt_factor
+        
+        
+        # Step 2: 计算 Lambda 扩展系数
+        vix_curr = self.market_params.get('vix', 15.0)
+        ivr_curr = self.market_params.get('ivr', 50.0)
+        
+        # ⭐ 从配置对象读取 Lambda 参数
+        k_sys = self.gamma_config.lambda_k_sys
+        k_idiosync = self.gamma_config.lambda_k_idiosync
+        vix_base = self.gamma_config.lambda_vix_base
+        ivr_floor = self.gamma_config.lambda_ivr_floor
         
         # VIX 部分：系统性溢价
         vix_premium = k_sys * max(0, (vix_curr - vix_base) / 100)
         
         # IVR 部分：低波防爆补偿
         ivr_premium = k_idiosync * max(0, (ivr_floor - ivr_curr) / 100)
-    
+        
         # 汇总 Lambda
         lambda_factor = 1.0 + vix_premium + ivr_premium
+        
         # Step 3: 最终 EM1$（调整后）
-        em1_dollar = raw_em1 * lambda_factor
-        targets['em1_dollar'] = round(em1_dollar, 2)
+        
+        adjusted_em1 = raw_em1 * lambda_factor
+        
+        # 保存结果
+        targets['em1_dollar'] = round(adjusted_em1, 2)
+        
+        
+        # 日志输出（详细分解）
         
         print(f"✅ EM1$ 计算完成:")
-        print(f"   [物理锚点] Raw_EM1$ = {spot_price} × {min_iv:.4f} × {self.em1_sqrt_factor} = ${raw_em1:.2f}")
+        print(f"   [物理锚点] Raw_EM1$ = {spot_price} × {min_iv:.4f} × {em1_sqrt_factor} = ${raw_em1:.2f}")
         print(f"   [Lambda 系数]")
         print(f"      • VIX 溢价: {k_sys} × max(0, ({vix_curr} - {vix_base})/100) = {vix_premium:.3f}")
         print(f"      • IVR 补偿: {k_idiosync} × max(0, ({ivr_floor} - {ivr_curr})/100) = {ivr_premium:.3f}")
         print(f"      • Lambda = 1.0 + {vix_premium:.3f} + {ivr_premium:.3f} = {lambda_factor:.3f}")
-        print(f"   [最终结果] Adjusted_EM1$ = {raw_em1:.2f} × {lambda_factor:.3f} = ${em1_dollar:.2f}")
+        print(f"   [最终结果] Adjusted_EM1$ = {raw_em1:.2f} × {lambda_factor:.3f} = ${adjusted_em1:.2f}")
         
         return targets
     
@@ -191,7 +213,7 @@ class FieldCalculator:
             targets['gamma_metrics'] = {}
         targets['gamma_metrics']['gap_distance_em1_multiple'] = round(gap_distance_em1, 2)
         
-        print(f"✅ gap_distance_em1_multiple 计算完成: {gap_distance_dollar} ÷ {em1_dollar} = {gap_distance_em1:.2f}")
+        print(f"✅ gap_distance_em1_multiple: {gap_distance_dollar} ÷ {em1_dollar} = {gap_distance_em1:.2f}")
         
         return targets
     
@@ -223,6 +245,7 @@ class FieldCalculator:
         return targets
     
     def _calculate_monthly_cluster_override(self, targets: Dict) -> Dict:
+        """计算 monthly_cluster_override"""
         gamma_metrics = targets.get('gamma_metrics', {})
         weekly_data = gamma_metrics.get('weekly_data', {})
         monthly_data = gamma_metrics.get('monthly_data', {})
@@ -234,19 +257,54 @@ class FieldCalculator:
         m_cluster_strength_gex = monthly_cluster_strength.get('abs_gex')
         
         if not w_cluster_strength_gex or not m_cluster_strength_gex:
-            print("⚠️ monthly_cluster_override(月度簇占优) 计算缺失输入或 nearby_abs_gex 为 0")
+            print("⚠️ monthly_cluster_override 计算缺失输入")
             if 'gamma_metrics' not in targets:
                 targets['gamma_metrics'] = {}
-            targets['gamma_metrics']['monthly_cluster_override'] = -999
+            targets['gamma_metrics']['monthly_cluster_override'] = False
             return targets
         
-        override = True if w_cluster_strength_gex and (m_cluster_strength_gex / w_cluster_strength_gex >= self.monthly_cluster_ratio) else False
+        # ⭐ 从配置对象读取
+        ratio_threshold = self.gamma_config.monthly_cluster_strength_ratio
+        override = (m_cluster_strength_gex / w_cluster_strength_gex >= ratio_threshold)
         
         targets['gamma_metrics']['monthly_cluster_override'] = override
         
-        print(f"✅ monthly_cluster_override: {m_cluster_strength_gex:.1f} / {w_cluster_strength_gex:.1f} >= {self.monthly_cluster_ratio:.2f}")
+        print(f"✅ monthly_cluster_override: {m_cluster_strength_gex:.1f} / {w_cluster_strength_gex:.1f} >= {ratio_threshold:.2f} → {override}")
         
         return targets
+    
+    def _calculate_indices_em1(self, data: Dict) -> Dict:
+        """计算所有指数的 EM1$"""
+        indices = data.get('indices', {})
+        
+        if not isinstance(indices, dict):
+            print("⚠️ indices 不是字典类型，跳过指数 EM1$ 计算")
+            return data
+        
+        em1_sqrt_factor = self.gamma_config.em1_sqrt_factor
+        
+        for idx_symbol, idx_data in indices.items():
+            if not isinstance(idx_data, dict):
+                continue
+            
+            spot_price_idx = idx_data.get('spot_price_idx')
+            iv_7d = idx_data.get('iv_7d')
+            iv_14d = idx_data.get('iv_14d')
+            
+            if not all([spot_price_idx, iv_7d, iv_14d]):
+                print(f"⚠️ 指数 {idx_symbol} 缺失计算参数")
+                indices[idx_symbol]['em1_dollar_idx'] = -999
+                continue
+            
+            min_iv = min(iv_7d, iv_14d)
+            em1_idx = spot_price_idx * min_iv * em1_sqrt_factor
+            
+            indices[idx_symbol]['em1_dollar_idx'] = round(em1_idx, 2)
+            
+            print(f"✅ {idx_symbol} EM1$: {spot_price_idx} × {min_iv:.4f} × {em1_sqrt_factor} = {em1_idx:.2f}")
+        
+        data['indices'] = indices
+        return data
     
     def _validate_calculations(self, targets: Dict) -> Dict:
         """验证计算结果的合理性"""
@@ -255,7 +313,7 @@ class FieldCalculator:
             "checks": []
         }
         
-        # 检查 EM1$ 范围 (0.5% - 10% spot)
+        # 检查 EM1$ 范围
         em1_dollar = targets.get('em1_dollar')
         spot_price = targets.get('spot_price')
         
@@ -270,7 +328,7 @@ class FieldCalculator:
                 "note": "合理范围：0.5%-10%" if is_valid else f"⚠️ 异常：{em1_pct:.2f}%"
             })
         
-        # 检查 gap_distance_em1_multiple (通常 < 5)
+        # 检查 gap_distance_em1_multiple
         gamma_metrics = targets.get('gamma_metrics', {})
         gap_em1 = gamma_metrics.get('gap_distance_em1_multiple')
         if gap_em1 and gap_em1 != -999:
@@ -282,7 +340,7 @@ class FieldCalculator:
                 "note": "合理范围：< 5" if is_valid else f"⚠️ 异常：{gap_em1:.2f}"
             })
         
-        # 检查 cluster_strength_ratio (通常 0.5 - 3.0)
+        # 检查 cluster_strength_ratio
         cluster_ratio = gamma_metrics.get('cluster_strength_ratio')
         if cluster_ratio and cluster_ratio != -999:
             is_valid = 0.5 <= cluster_ratio <= 3.0
@@ -305,164 +363,27 @@ class FieldCalculator:
         if value in ["N/A", "数据不足", "", "unknown"]:
             return False
         return True
-    
-    def _calculate_indices_em1(self, data: Dict) -> Dict:
-        """
-        计算所有指数的 EM1$
-        
-        公式：EM1$_idx = spot_price_idx × min(iv_7d, iv_14d) × sqrt(1/252)
-        
-        Args:
-            data: 包含 indices 字段的数据
-            
-        Returns:
-            更新后的数据（indices 中新增 em1_dollar_idx 字段）
-        """
-        indices = data.get('indices', {})
-        
-        if not isinstance(indices, dict):
-            print("⚠️ indices 不是字典类型，跳过指数 EM1$ 计算")
-            return data
-        
-        for idx_symbol, idx_data in indices.items():
-            if not isinstance(idx_data, dict):
-                continue
-            
-            spot_price_idx = idx_data.get('spot_price_idx')
-            iv_7d = idx_data.get('iv_7d')
-            iv_14d = idx_data.get('iv_14d')
-            
-            if not all([spot_price_idx, iv_7d, iv_14d]):
-                print(f"⚠️ 指数 {idx_symbol} 缺失计算参数")
-                indices[idx_symbol]['em1_dollar_idx'] = -999
-                continue
-            
-            min_iv = min(iv_7d, iv_14d)
-            em1_idx = spot_price_idx * min_iv * self.em1_sqrt_factor
-            
-            indices[idx_symbol]['em1_dollar_idx'] = round(em1_idx, 2)
-            
-            print(f"✅ {idx_symbol} EM1$: {spot_price_idx} × {min_iv:.4f} × {self.em1_sqrt_factor} = {em1_idx:.2f}")
-        
-        data['indices'] = indices
-        return data
-
-
-
-def generate_补齐指引(validation: Dict, merge_log: str, symbol: str) -> str:
-    """生成补齐指引"""
-    missing = validation["missing_fields"]
-    completion_rate = validation["completion_rate"]
-    
-    if not missing:
-        return "✅ 数据完整，无需补齐"
-    
-    lines = [
-        "=" * 50,
-        f"📋 数据补齐指引 ({completion_rate}%)",
-        "=" * 50,
-        "",
-        f"❌ 当前进度 {completion_rate}% ({validation['provided']}/{validation['total_required']})",
-        f"   还需补齐 {len(missing)} 个字段",
-        "",
-        "🔴 缺失字段："
-    ]
-    
-    for item in missing[:10]:
-        lines.append(f"  • {item['path']}")
-    
-    if len(missing) > 10:
-        lines.append(f"  ... 还有 {len(missing) - 10} 个字段")
-    
-    lines.extend([
-        "",
-        "📝 历史合并记录:",
-        merge_log,
-        "",
-        f"👉 下一步: 请继续上传图表补齐剩余 {len(missing)} 个字段",
-        f"   命令: python app.py analyze -s {symbol} -f <folder> --mode update"
-    ])
-    
-    return "\n".join(lines)
 
 
 def main(aggregated_data: dict, symbol: str, **env_vars) -> dict:
-    """
-    计算节点入口函数（修复版）
-    
-    ✅ 修复点：
-    1. 正确解析 aggregated_data['result'] 中的 JSON 字符串
-    2. 处理嵌套的 targets 结构
-    3. 添加详细的调试日志
-    """
+    """计算节点入口函数（重构版）"""
     try:
-        
-        print("=" * 80)
         print("🔍 [Calculator] 开始验证原始字段完整性")
-        print("=" * 80)
-        
-        # ✅ 修复 1: 正确解析输入数据
-        print(f"📥 收到的 aggregated_data 类型: {type(aggregated_data)}")
-        print(f"📥 aggregated_data 的键: {aggregated_data.keys() if isinstance(aggregated_data, dict) else 'N/A'}")
-        
-        # 提取 result 字段
-        if isinstance(aggregated_data, dict) and 'result' in aggregated_data:
-            result_str = aggregated_data['result']
-            print(f"📥 result 字段类型: {type(result_str)}")
-            
-            # 解析 JSON 字符串
-            if isinstance(result_str, str):
-                try:
-                    data = json.loads(result_str)
-                    print("✅ 成功解析 result 字段为 JSON 对象")
-                except json.JSONDecodeError as e:
-                    print(f"❌ JSON 解析失败: {e}")
-                    return {
-                        "result": json.dumps({
-                            "error": True,
-                            "error_message": f"JSON 解析失败: {str(e)}"
-                        }, ensure_ascii=False)
-                    }
-            elif isinstance(result_str, dict):
-                data = result_str
-                print("✅ result 字段已经是字典对象")
-            else:
-                print(f"❌ result 字段类型异常: {type(result_str)}")
-                return {
-                    "result": json.dumps({
-                        "error": True,
-                        "error_message": f"result 字段类型异常: {type(result_str)}"
-                    }, ensure_ascii=False)
-                }
-        elif isinstance(aggregated_data, str):
-            # 兼容：整个参数就是 JSON 字符串
-            data = json.loads(aggregated_data)
-            print("✅ 整个参数解析为 JSON 对象")
+        # 提取数据
+        result_str = aggregated_data.get('result')
+        if isinstance(result_str, str):
+            data = json.loads(result_str)
         else:
             data = aggregated_data
-            print("⚠️ 直接使用 aggregated_data（可能存在问题）")
         
-        # ✅ 修复 2: 验证 targets 结构
-        print(f"\n📊 解析后的数据结构:")
-        print(f"  • 顶层键: {list(data.keys())}")
-        
-        if 'targets' in data:
-            targets = data['targets']
-            print(f"  • targets 类型: {type(targets)}")
-            if isinstance(targets, dict):
-                print(f"  • targets 包含的键: {list(targets.keys())[:5]}...")
-            elif isinstance(targets, str):
-                print(f"  ⚠️ targets 是字符串，需要进一步解析")
-        else:
-            print(f"  ❌ 未找到 targets 字段")
-        
+        # 提取市场参数
         market_params = env_vars.get('market_params', {})
-        # 创建计算器
-        calculator = FieldCalculator(env_vars, market_params=market_params)
         
-        # 1. 验证原始字段
-        print("\n🔍 开始验证原始字段完整性...")
-        validation = calculator.validate_raw_fields(data)
+        # ⭐ 传入 config 实例
+        calculator = FieldCalculator(config, market_params=market_params)
+        
+        # 验证原始字段
+        validation = calculator.validate_raw_fields(data.get('result'))
         
         print(f"\n📊 验证结果:")
         print(f"  • 完成率: {validation['completion_rate']}%")
@@ -472,34 +393,22 @@ def main(aggregated_data: dict, symbol: str, **env_vars) -> dict:
         if not validation["is_complete"]:
             print(f"❌ 数据不完整，缺失 {len(validation['missing_fields'])} 个字段")
             
-            # 显示前 5 个缺失字段
-            for i, field in enumerate(validation['missing_fields'][:5], 1):
-                print(f"  {i}. {field['path']}")
-            
-            if len(validation['missing_fields']) > 5:
-                print(f"  ... 还有 {len(validation['missing_fields']) - 5} 个字段")
-            
-            # 生成补齐指引
-            merge_log = aggregated_data.get("merge_log", "无历史记录") if isinstance(aggregated_data, dict) else "无历史记录"
-            guide = generate_补齐指引(validation, merge_log, symbol)
-            
             result = {
                 "status": "incomplete",
                 "data_status": "awaiting_data",
                 "validation": validation,
-                "guide": guide,
                 "targets": data.get("targets")
             }
             return result
         
         print(f"✅ 原始字段验证通过: {validation['provided']}/{validation['total_required']}")
         
-        # 2. 计算衍生字段
+        # 计算衍生字段
         print("\n🔧 开始计算衍生字段...")
         calculated_data = calculator.calculate_all(data)
         
         print("✅ 所有计算完成")
-        print("=" * 80)
+        print(">>" * 80)
         
         result = {
             "status": "complete",

@@ -1,23 +1,17 @@
 """
-数据验证工具
+数据验证工具（修复版）
+修复：支持完整路径作为 cache_file 参数
 """
 
 import re
+import json
 from typing import Tuple
 from datetime import datetime
 from pathlib import Path
-import json
+
 
 def validate_symbol(symbol: str) -> Tuple[bool, str]:
-    """
-    验证股票代码
-    
-    Args:
-        symbol: 股票代码
-        
-    Returns:
-        (是否有效, 标准化后的代码或错误消息)
-    """
+    """验证股票代码"""
     if not symbol:
         return False, "股票代码不能为空"
     
@@ -44,33 +38,34 @@ def validate_symbol(symbol: str) -> Tuple[bool, str]:
 
 
 def normalize_symbol(symbol: str) -> str:
-    """
-    标准化股票代码（无验证版本，用于内部快速处理）
-    
-    Args:
-        symbol: 股票代码
-        
-    Returns:
-        标准化后的代码
-    """
+    """标准化股票代码（无验证版本）"""
     if not symbol:
         return "UNKNOWN"
     
     return symbol.strip().upper()
 
+
 def validate_cache_file(cache_file: str, symbol: str) -> tuple[bool, str, dict]:
     """
-    验证缓存文件的合法性
+    验证缓存文件的合法性（支持路径输入）
     
     Args:
-        cache_file: 缓存文件名（如 NVDA_20251130.json）
+        cache_file: 缓存文件名或路径
+            支持格式：
+            - 文件名：NVDA_20251201.json
+            - 相对路径：./data/output/NVDA/20251201/NVDA_20251201.json
+            - 绝对路径：/path/to/NVDA_20251201.json
         symbol: 股票代码
         
     Returns:
         (is_valid, error_message, cache_info)
     """
+    # ⭐ 修复：提取文件名（兼容路径输入）
+    cache_path = Path(cache_file)
+    filename = cache_path.name
+    
     # 1. 解析文件名
-    match = re.match(r'(\w+)_(\d{8})\.json', cache_file)
+    match = re.match(r'(\w+)_(\d{8})\.json', filename)
     if not match:
         return False, f"缓存文件名格式错误，应为 {{SYMBOL}}_{{YYYYMMDD}}.json", {}
     
@@ -87,22 +82,25 @@ def validate_cache_file(cache_file: str, symbol: str) -> tuple[bool, str, dict]:
     except ValueError:
         return False, f"缓存文件日期格式错误: {file_date}", {}
     
-    # 4. 检查文件是否存在
-    cache_path = Path(f"data/output/{symbol}/{file_date}/{cache_file}")
-    if not cache_path.exists():
-        return False, f"缓存文件不存在: {cache_path}", {}
+    # 4. 检查文件是否存在（优先使用用户路径）
+    if cache_path.exists():
+        final_cache_path = cache_path
+    else:
+        # 回退到标准路径
+        final_cache_path = Path(f"data/output/{symbol}/{file_date}/{filename}")
+        if not final_cache_path.exists():
+            return False, f"缓存文件不存在: {final_cache_path}", {}
     
     # 5. 加载并验证文件内容
     try:
-        with open(cache_path, 'r', encoding='utf-8') as f:
+        with open(final_cache_path, 'r', encoding='utf-8') as f:
             cache_data = json.load(f)
     except Exception as e:
         return False, f"缓存文件读取失败: {str(e)}", {}
     
-    # 6. 验证文件内部的 start_date 与文件名日期一致
+    # 6. 验证内部日期一致性
     start_date = cache_data.get("start_date", "")
     if start_date:
-        # 格式：2025-11-30 → 20251130
         internal_date = start_date.replace("-", "")
         if internal_date != file_date:
             return False, (
@@ -115,7 +113,7 @@ def validate_cache_file(cache_file: str, symbol: str) -> tuple[bool, str, dict]:
         "symbol": file_symbol,
         "date": file_date,
         "parsed_date": parsed_date,
-        "cache_path": cache_path,
+        "cache_path": final_cache_path,  # ⭐ 返回实际路径
         "start_date": start_date,
         "has_source_target": cache_data.get("source_target") is not None,
         "snapshot_count": sum(1 for k in cache_data.keys() if k.startswith("snapshots_"))

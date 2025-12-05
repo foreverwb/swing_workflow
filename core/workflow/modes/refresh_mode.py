@@ -132,7 +132,6 @@ class RefreshMode(FullAnalysisMode):
         calculator_input = {
             "result": agent3_result  # 模拟 Aggregator 的输出格式
         }
-        
         try:
             result = self.agent_executor.execute_code_node(
                 node_name="Calculator",

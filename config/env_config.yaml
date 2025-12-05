@@ -218,59 +218,6 @@ data_fetching:
   default_index_primary: "SPX"       # 主要指数
   default_index_secondary: "QQQ"     # 次要指数
 
-# ======================================
-# 14. 环境变量别名映射（兼容旧代码）
-# ======================================
-# 以下是扁平化访问的别名，用于向后兼容
-aliases:
-  EM1_SQRT_FACTOR: gamma.em1_sqrt_factor
-  BREAK_WALL_THRESHOLD_LOW: gamma.break_wall_threshold_low
-  BREAK_WALL_THRESHOLD_HIGH: gamma.break_wall_threshold_high
-  MONTHLY_OVERRIDE_THRESHOLD: gamma.monthly_override_threshold
-  MONTHLY_CLUSTER_STRENGTH_RATIO: gamma.monthly_cluster_strength_ratio
-  CLUSTER_STRENGTH_THRESHOLD_T: gamma.cluster_strength_threshold_t
-  CLUSTER_STRENGTH_THRESHOLD_S: gamma.cluster_strength_threshold_s
-  WALL_CLUSTER_WIDTH: gamma.wall_cluster_width
-  WALL_PEAK_MULTIPLIER: gamma.wall_peak_multiplier
-  
-  DEX_SAME_DIR_THRESHOLD_STRONG: direction.dex_same_dir_threshold_strong
-  DEX_SAME_DIR_THRESHOLD_MEDIUM: direction.dex_same_dir_threshold_medium
-  DEX_SAME_DIR_THRESHOLD_WEAK: direction.dex_same_dir_threshold_weak
-  IV_PATH_THRESHOLD_VOL: direction.iv_path_threshold_vol
-  IV_PATH_THRESHOLD_PCT: direction.iv_path_threshold_pct
-  IV_NOISE_THRESHOLD: direction.iv_noise_threshold
-  
-  DEFAULT_DTE_WEEKLY_SHORT: dte.default_weekly_short
-  DEFAULT_DTE_WEEKLY_MID: dte.default_weekly_mid
-  DEFAULT_DTE_MONTHLY_SHORT: dte.default_monthly_short
-  DEFAULT_DTE_MONTHLY_MID: dte.default_monthly_mid
-  
-  SCORE_WEIGHT_GAMMA_REGIME: scoring.weight_gamma_regime
-  SCORE_WEIGHT_BREAK_WALL: scoring.weight_break_wall
-  SCORE_WEIGHT_DIRECTION: scoring.weight_direction
-  SCORE_WEIGHT_IV: scoring.weight_iv
-  SCORE_WEIGHT_INDEX_CONSISTENCY: scoring.weight_index_consistency
-  ENTRY_THRESHOLD_SCORE: scoring.entry_threshold_score
-  ENTRY_THRESHOLD_PROBABILITY: scoring.entry_threshold_probability
-
-  SCORE_WEIGHT_INDEX_CONSISTENCY: scoring.weight_index_consistency
-  INDEX_GAP_THRESHOLD_RATIO: scoring.index_gap_threshold_ratio
-  INDEX_CONFLICT_PENALTY: scoring.index_conflict_penalty
-  INDEX_CONSISTENCY_BONUS: scoring.index_consistency_bonus
-  
-  ALPHA_VANTAGE_API_KEY: alpha_vantage.api_key
-  ALPHA_VANTAGE_API_URL: alpha_vantage.api_url
-  
-  MAX_SINGLE_RISK_PCT: risk_management.max_single_risk_pct
-  MAX_TOTAL_EXPOSURE_PCT: risk_management.max_total_exposure_pct
-
-# ========================================
-# 注意事项
-# ========================================
-# 1. 会话变量（conversation_variables）已内置在 WorkflowEngine.conversation_vars 中
-# 2. 模型配置已独立至 config/model_config.yaml
-# 3. API Key 建议通过环境变量设置，避免直接写在配置文件中
-
 # 控制台输出配置
 console:
   enable_color: true                # 是否启用颜色
