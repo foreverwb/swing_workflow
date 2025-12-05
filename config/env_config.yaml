@@ -242,3 +242,98 @@ vision:
   #   - 更准确识别小数字（GEX值、行权价）
   #   - 更精确的曲线识别（Gamma分布、Skew）
   #   - 更清晰的标签读取（图表注释、Legend）
+
+  # 10. Beta 敏感度配置
+# ======================================
+beta:
+  # 板块默认 Beta 值
+  # 用于在无法获取实时 Beta 时的默认估算
+  sector_defaults:
+    # 高 Beta 板块 (> 1.3)
+    semiconductor: 1.5      # 半导体
+    tech_growth: 1.4        # 科技成长
+    ev: 1.4                 # 电动车
+    biotech: 1.5            # 生物科技
+    crypto: 1.8             # 加密货币相关
+    
+    # 标准 Beta 板块 (0.7 - 1.3)
+    tech_large: 1.1         # 大型科技
+    consumer: 1.0           # 消费
+    industrial: 1.0         # 工业
+    financial: 1.1          # 金融
+    
+    # 低 Beta 板块 (< 0.7)
+    utilities: 0.5          # 公用事业
+    healthcare: 0.7         # 医疗保健
+    consumer_staples: 0.6   # 必需消费品
+    reits: 0.8              # REITs
+  
+  # 常见股票的 Beta 预设（优先级最高）
+  stock_overrides:
+    # 高 Beta（> 1.3）
+    NVDA: 1.7
+    AMD: 1.6
+    TSLA: 2.0
+    MSTR: 2.5
+    SMCI: 1.8
+    ARM: 1.5
+    AVGO: 1.3
+    MU: 1.5
+    COIN: 2.0
+    
+    # 标准 Beta（0.7 - 1.3）
+    AAPL: 1.2
+    MSFT: 1.1
+    GOOGL: 1.1
+    AMZN: 1.2
+    META: 1.3
+    NFLX: 1.4
+    CRM: 1.2
+    
+    # 低 Beta（< 0.7）
+    JNJ: 0.6
+    PG: 0.5
+    KO: 0.6
+    VZ: 0.4
+    T: 0.5
+    XOM: 0.9
+    CVX: 1.0
+  
+  # 股票到板块的映射（用于未在 stock_overrides 中的股票）
+  symbol_to_sector:
+    # 半导体
+    INTC: semiconductor
+    QCOM: semiconductor
+    TXN: semiconductor
+    KLAC: semiconductor
+    LRCX: semiconductor
+    AMAT: semiconductor
+    
+    # 电动车
+    RIVN: ev
+    LCID: ev
+    NIO: ev
+    XPEV: ev
+    LI: ev
+    
+    # 大型科技
+    UBER: tech_large
+    ABNB: tech_large
+    SNOW: tech_growth
+    PLTR: tech_growth
+  
+  # 敏感度系数阈值
+  sensitivity:
+    high_beta_threshold: 1.3    # Beta > 1.3 视为高敏感
+    low_beta_threshold: 0.7     # Beta < 0.7 视为低敏感
+    k_sys_high: 0.8             # 高 Beta 股票的 k_sys
+    k_sys_standard: 0.5         # 标准 Beta 股票的 k_sys
+    k_sys_low: 0.3              # 低 Beta 股票的 k_sys
+    
+    # 财报相关
+    earnings_warning_days: 14   # 距财报 ≤ 14天提高防御
+    k_idiosync_high: 1.0        # 临近财报时的 k_idiosync
+    k_idiosync_normal: 0.5      # 常规 k_idiosync
+  
+  # 默认值（当无法确定时使用）
+  default_beta: 1.0

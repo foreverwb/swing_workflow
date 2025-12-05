@@ -3,28 +3,149 @@ FieldCalculator - 字段关联计算引擎（重构版）
 特性：
 1. 配置对象化访问（无需硬编码键名）
 2. 实现 Lambda 扩展系数计算
-3. 删除冗余的 _parse_env_vars 方法
+3. 动态敏感度系数（基于 Beta 和财报日期）
+4. Beta 和财报日期从配置/缓存/命令行获取
 """
 
 import json
-from typing import Dict, Any
+from typing import Dict, Any, Optional, Tuple
 from datetime import datetime
 from utils.config_loader import config
+
 
 class FieldCalculator:
     """字段关联计算器（重构版）"""
     
-    def __init__(self, config_loader, market_params: Dict[str, float] = None):
+    def __init__(
+        self, 
+        config_loader, 
+        market_params: Dict[str, float] = None,
+        event_data: Dict[str, Any] = None
+    ):
         """
         初始化计算器
         
         Args:
             config_loader: ConfigLoader 实例
-            market_params: 市场参数 (vix, ivr, iv30, hv20)
+            market_params: 市场参数 (vix, ivr, iv30, hv20, beta, earning_date)
+            event_data: 事件检测数据（包含 days_to_earnings）
         """
-        # ⭐ 一次性获取所有 gamma 配置
+        # 一次性获取所有配置
         self.gamma_config = config_loader.get_section('gamma')
+        self.beta_config = config_loader.get_section('beta')
         self.market_params = market_params or {}
+        self.event_data = event_data or {}
+    
+    def get_beta(self, symbol: str) -> float:
+        """
+        获取股票 Beta 值
+        
+        优先级：
+        1. market_params 中用户指定的 beta（命令行/缓存）
+        2. 配置文件中的 stock_overrides
+        3. 配置文件中的 symbol_to_sector → sector_defaults
+        4. 默认值 (1.0)
+        
+        Args:
+            symbol: 股票代码
+            
+        Returns:
+            Beta 值
+        """
+        symbol_upper = symbol.upper()
+        
+        # 1. 优先使用 market_params 中用户指定的 beta
+        user_beta = self.market_params.get('beta')
+        if user_beta is not None:
+            return user_beta
+        
+        # 2. 查找配置文件中的股票级别预设
+        stock_overrides = self.beta_config.get('stock_overrides', {})
+        if symbol_upper in stock_overrides:
+            return stock_overrides[symbol_upper]
+        
+        # 3. 查找股票到板块的映射
+        symbol_to_sector = self.beta_config.get('symbol_to_sector', {})
+        sector_defaults = self.beta_config.get('sector_defaults', {})
+        
+        if symbol_upper in symbol_to_sector:
+            sector = symbol_to_sector[symbol_upper]
+            if sector in sector_defaults:
+                return sector_defaults[sector]
+        
+        # 4. 返回默认值
+        return self.beta_config.get('default_beta', 1.0)
+    
+    def get_days_to_earnings(self) -> Optional[int]:
+        """
+        获取距离财报的天数
+        
+        优先级：
+        1. market_params 中的 earning_date（命令行/缓存）→ 计算天数
+        2. event_data 中的 days_away（事件检测结果）
+        
+        Returns:
+            距离财报天数，无数据返回 None
+        """
+        # 1. 优先使用 market_params 中的 earning_date
+        earning_date_str = self.market_params.get('earning_date')
+        if earning_date_str:
+            try:
+                earning_date = datetime.strptime(earning_date_str, "%Y-%m-%d")
+                today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+                days_to_earnings = (earning_date - today).days
+                return days_to_earnings
+            except ValueError:
+                pass  # 日期格式错误，跳过
+        
+        # 2. 从 event_data 中提取
+        events = self.event_data.get('events', {})
+        earnings = events.get('earnings', {})
+        
+        if earnings and earnings.get('days_away') is not None:
+            return earnings['days_away']
+        
+        return None
+    
+    def get_sensitivity_coeffs(self, symbol: str) -> Tuple[float, float]:
+        """
+        根据标的属性动态获取敏感度系数，消除魔法数字
+        
+        Args:
+            symbol: 股票代码
+            
+        Returns:
+            (k_sys, k_idiosync) 元组
+        """
+        beta = self.get_beta(symbol)
+        days_to_earnings = self.get_days_to_earnings()
+        
+        # 从配置读取阈值
+        sensitivity = self.beta_config.get('sensitivity', {})
+        high_beta_threshold = sensitivity.get('high_beta_threshold', 1.3)
+        low_beta_threshold = sensitivity.get('low_beta_threshold', 0.7)
+        k_sys_high = sensitivity.get('k_sys_high', 0.8)
+        k_sys_standard = sensitivity.get('k_sys_standard', 0.5)
+        k_sys_low = sensitivity.get('k_sys_low', 0.3)
+        earnings_warning_days = sensitivity.get('earnings_warning_days', 14)
+        k_idiosync_high = sensitivity.get('k_idiosync_high', 1.0)
+        k_idiosync_normal = sensitivity.get('k_idiosync_normal', 0.5)
+        
+        # 1. 动态计算 k_sys (基于 Beta)
+        if beta > high_beta_threshold:
+            k_sys = k_sys_high  # 高敏感（高 Beta 股票）
+        elif beta < low_beta_threshold:
+            k_sys = k_sys_low   # 低敏感（防御型股票）
+        else:
+            k_sys = k_sys_standard  # 标准
+        
+        # 2. 动态计算 k_idiosync (基于事件风险)
+        if days_to_earnings is not None and days_to_earnings <= earnings_warning_days:
+            k_idiosync = k_idiosync_high  # 临近财报，防御等级拉满
+        else:
+            k_idiosync = k_idiosync_normal  # 常规防御
+        
+        return k_sys, k_idiosync
     
     def validate_raw_fields(self, data: Dict) -> Dict:
         """验证原始字段完整性（23个）"""
@@ -135,7 +256,12 @@ class FieldCalculator:
         2. Lambda = 1.0 + k_sys × max(0, (VIX - VIX_base)/100) 
                         + k_idiosync × max(0, (IVR_floor - IVR)/100)
         3. Adjusted_EM1$ = Raw_EM1$ × Lambda
+        
+        动态敏感度系数：
+        - k_sys: 基于 Beta 动态计算（高 Beta 股票更敏感）
+        - k_idiosync: 基于财报日期动态计算（临近财报提高防御）
         """
+        symbol = targets.get('symbol', 'UNKNOWN')
         spot_price = targets.get('spot_price')
         atm_iv = targets.get('atm_iv', {})
         iv_7d = atm_iv.get('iv_7d')
@@ -150,7 +276,7 @@ class FieldCalculator:
         # Step 1: 计算物理锚点 (Raw_EM1$)
         
         min_iv = min(iv_7d, iv_14d)
-        # ⭐ 从配置对象读取
+        # 从配置对象读取
         em1_sqrt_factor = self.gamma_config.em1_sqrt_factor
         raw_em1 = spot_price * min_iv * em1_sqrt_factor
         
@@ -159,11 +285,22 @@ class FieldCalculator:
         vix_curr = self.market_params.get('vix', 15.0)
         ivr_curr = self.market_params.get('ivr', 50.0)
         
-        # ⭐ 从配置对象读取 Lambda 参数
-        k_sys = self.gamma_config.lambda_k_sys
-        k_idiosync = self.gamma_config.lambda_k_idiosync
+        # 动态获取敏感度系数（基于 Beta 和财报日期）
+        k_sys, k_idiosync = self.get_sensitivity_coeffs(symbol)
+        
+        # 从配置对象读取基准参数
         vix_base = self.gamma_config.lambda_vix_base
         ivr_floor = self.gamma_config.lambda_ivr_floor
+        
+        # 获取 Beta 和财报信息用于日志
+        beta = self.get_beta(symbol)
+        days_to_earnings = self.get_days_to_earnings()
+        
+        # 判断 Beta 来源
+        beta_source = self._get_beta_source(symbol)
+        
+        # 判断财报日期来源
+        earning_source = self._get_earning_source()
         
         # VIX 部分：系统性溢价
         vix_premium = k_sys * max(0, (vix_curr - vix_base) / 100)
@@ -181,11 +318,29 @@ class FieldCalculator:
         # 保存结果
         targets['em1_dollar'] = round(adjusted_em1, 2)
         
+        # 保存 Lambda 计算细节（供后续分析）
+        targets['_lambda_details'] = {
+            'beta': beta,
+            'beta_source': beta_source,
+            'days_to_earnings': days_to_earnings,
+            'earning_source': earning_source,
+            'k_sys': k_sys,
+            'k_idiosync': k_idiosync,
+            'vix_premium': round(vix_premium, 4),
+            'ivr_premium': round(ivr_premium, 4),
+            'lambda_factor': round(lambda_factor, 4),
+            'raw_em1': round(raw_em1, 2)
+        }
+        
         
         # 日志输出（详细分解）
         
         print(f"✅ EM1$ 计算完成:")
         print(f"   [物理锚点] Raw_EM1$ = {spot_price} × {min_iv:.4f} × {em1_sqrt_factor} = ${raw_em1:.2f}")
+        print(f"   [动态敏感度系数]")
+        print(f"      • Beta = {beta:.2f} ({beta_source}) → k_sys = {k_sys}")
+        earnings_info = f"{days_to_earnings}天 ({earning_source})" if days_to_earnings is not None else "无数据"
+        print(f"      • 距财报 = {earnings_info} → k_idiosync = {k_idiosync}")
         print(f"   [Lambda 系数]")
         print(f"      • VIX 溢价: {k_sys} × max(0, ({vix_curr} - {vix_base})/100) = {vix_premium:.3f}")
         print(f"      • IVR 补偿: {k_idiosync} × max(0, ({ivr_floor} - {ivr_curr})/100) = {ivr_premium:.3f}")
@@ -193,6 +348,40 @@ class FieldCalculator:
         print(f"   [最终结果] Adjusted_EM1$ = {raw_em1:.2f} × {lambda_factor:.3f} = ${adjusted_em1:.2f}")
         
         return targets
+    
+    def _get_beta_source(self, symbol: str) -> str:
+        """获取 Beta 值的来源"""
+        symbol_upper = symbol.upper()
+        
+        # 1. 用户指定
+        if self.market_params.get('beta') is not None:
+            return "用户指定"
+        
+        # 2. 股票预设
+        stock_overrides = self.beta_config.get('stock_overrides', {})
+        if symbol_upper in stock_overrides:
+            return "股票预设"
+        
+        # 3. 板块映射
+        symbol_to_sector = self.beta_config.get('symbol_to_sector', {})
+        if symbol_upper in symbol_to_sector:
+            return f"板块映射:{symbol_to_sector[symbol_upper]}"
+        
+        # 4. 默认值
+        return "默认值"
+    
+    def _get_earning_source(self) -> str:
+        """获取财报日期的来源"""
+        # 1. 用户指定
+        if self.market_params.get('earning_date'):
+            return "用户指定"
+        
+        # 2. 事件检测
+        events = self.event_data.get('events', {})
+        if events.get('earnings', {}).get('days_away') is not None:
+            return "事件检测"
+        
+        return "无数据"
     
     def _calculate_gap_distance_em1(self, targets: Dict) -> Dict:
         """计算 gap_distance_em1_multiple = gap_distance_dollar ÷ em1_dollar"""
@@ -263,7 +452,7 @@ class FieldCalculator:
             targets['gamma_metrics']['monthly_cluster_override'] = False
             return targets
         
-        # ⭐ 从配置对象读取
+        # 从配置对象读取
         ratio_threshold = self.gamma_config.monthly_cluster_strength_ratio
         override = (m_cluster_strength_gex / w_cluster_strength_gex >= ratio_threshold)
         
@@ -366,27 +555,40 @@ class FieldCalculator:
 
 
 def main(aggregated_data: dict, symbol: str, **env_vars) -> dict:
-    """计算节点入口函数（重构版）"""
+    """
+    计算节点入口函数（重构版）
+    
+    Args:
+        aggregated_data: 聚合后的数据
+        symbol: 股票代码
+        **env_vars: 环境变量，包含：
+            - market_params: 市场参数 (vix, ivr, iv30, hv20)
+            - event_data: 事件检测数据（可选，用于动态敏感度计算）
+    """
     try:
         print("🔍 [Calculator] 开始验证原始字段完整性")
         # 提取数据
         result_str = aggregated_data.get('result')
         if isinstance(result_str, str):
             data = json.loads(result_str)
-        elif isinstance(result_str, dict):
-            # Refresh 模式：result 直接是字典
-            data = result_str
         else:
             data = aggregated_data
         
         # 提取市场参数
         market_params = env_vars.get('market_params', {})
         
-        # ⭐ 传入 config 实例
-        calculator = FieldCalculator(config, market_params=market_params)
+        # 提取事件数据（用于动态敏感度系数计算）
+        event_data = env_vars.get('event_data', {})
+        
+        # 传入 config 实例和事件数据
+        calculator = FieldCalculator(
+            config, 
+            market_params=market_params,
+            event_data=event_data
+        )
         
         # 验证原始字段
-        validation = calculator.validate_raw_fields(data)
+        validation = calculator.validate_raw_fields(data.get('result'))
         
         print(f"\n📊 验证结果:")
         print(f"  • 完成率: {validation['completion_rate']}%")

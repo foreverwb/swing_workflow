@@ -47,11 +47,13 @@ def cli():
 @click.option('--cache', type=str, help='指定缓存文件名（如 NVDA_20251127.json）')
 # 🆕 新增市场状态参数
 @click.option('--vix', type=float, default=None, help='VIX指数 (如 18.5) ')
-@click.option('--ivr', type=float, default=None, help='IV Rank 0-100 (如 65.3) ')
-@click.option('--iv30', type=float, default=None, help='30日隐含波动率 (如 42.8) ')
-@click.option('--hv20', type=float, default=None, help='20日历史波动率 (如 38.2) ')
+@click.option('--ivr', type=float, default=None, help='IV Rank 0-100 ')
+@click.option('--iv30', type=float, default=None, help='30日隐含波动率 ')
+@click.option('--hv20', type=float, default=None, help='20日历史波动率 ')
+@click.option('--beta', type=float, default=None, help='股票 Beta 值 - ')
+@click.option('--earning-date', type=str, default=None, help='财报日期 YYYY-MM-DD - 可选')
 def analyze(symbol: str, folder: str, model_config: str, output: str, mode: str, cache: str,
-            vix: float, ivr: float, iv30: float, hv20: float):
+            vix: float, ivr: float, iv30: float, hv20: float, beta: float, earning_date: str):
     """
     智能分析命令
     - 无文件夹：生成数据抓取命令清单（Agent2）
@@ -85,6 +87,15 @@ def analyze(symbol: str, folder: str, model_config: str, output: str, mode: str,
                 raise ValueError(f"IVR 必须在 0-100 之间，当前值: {ivr}")
             if vix < 0 or iv30 < 0 or hv20 <= 0:
                 raise ValueError("VIX/IV30/HV20 必须为正数")
+            if beta is not None and beta <= 0:
+                raise ValueError(f"Beta 必须为正数，当前值: {beta}")
+            # 验证财报日期（如果提供）
+            if earning_date:
+                from datetime import datetime
+                try:
+                    datetime.strptime(earning_date, "%Y-%m-%d")
+                except ValueError:
+                    raise ValueError(f"财报日期格式错误，应为 YYYY-MM-DD，当前值: {earning_date}")
         except ValueError as e:
             console.print(f"[red]❌ 参数错误: {e}[/red]")
             sys.exit(1)
@@ -95,6 +106,12 @@ def analyze(symbol: str, folder: str, model_config: str, output: str, mode: str,
             'iv30': iv30,
             'hv20': hv20
         }
+        if beta is not None:
+            env_vars['market_params']['beta'] = beta
+            console.print(f"[dim]   Beta={beta} (用户指定)[/dim]")
+        if earning_date:
+            env_vars['market_params']['earning_date'] = earning_date
+            console.print(f"[dim]   财报日期={earning_date} (用户指定)[/dim]")
         logger.info(f"✅ 市场参数已设置 | VIX={vix}, IVR={ivr}, VRP={iv30/hv20:.2f}")
         
     else:
@@ -117,9 +134,14 @@ def analyze(symbol: str, folder: str, model_config: str, output: str, mode: str,
         
         mp = cached_params['market_params']
         dp = cached_params['dyn_params']
+        
+        beta_info = f", Beta={mp.get('beta')}" if mp.get('beta') else ""
+        earning_info = f", 财报={mp.get('earning_date')}" if mp.get('earning_date') else ""
+        
         logger.info(f"✅ 从缓存加载市场参数 | VIX={mp.get('vix')}, IVR={mp.get('ivr')}, 场景={dp.get('scenario')}")
         console.print(f"[green]✅ 从缓存加载市场参数[/green]")
-        console.print(f"[dim]   VIX={mp.get('vix')}, IVR={mp.get('ivr')}, 场景={dp.get('scenario')}[/dim]")
+        console.print(f"[dim]   VIX={mp.get('vix')}, IVR={mp.get('ivr')}, 场景={dp.get('scenario')}{beta_info}{earning_info}[/dim]")
+    
     
     # 创建命令处理器
     command = AnalyzeCommand(console, model_client, env_vars)
