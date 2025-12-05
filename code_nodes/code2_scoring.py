@@ -1,6 +1,5 @@
-
 import json
-from typing import Dict, Any
+from typing import Dict, Any, Tuple
 
 
 def main(agent3_output: dict, technical_score: float = 0, **env_vars) -> dict:
@@ -44,8 +43,15 @@ class OptionsScoring:
         Args:
             env_vars: 环境变量字典，包含所有阈值参数
         """
-        
         self.env = self._parse_env_vars(env_vars)
+        self.market_params = env_vars.get('market_params', {})
+        
+        # 获取动态权重配置
+        config = env_vars.get('config')
+        if config:
+            self.dynamic_weights_config = config.get('scoring.dynamic_weights', {})
+        else:
+            self.dynamic_weights_config = {}
         
     def _parse_env_vars(self, env_vars: Dict[str, Any]) -> Dict[str, float]:
         """解析并验证环境变量"""
@@ -85,6 +91,70 @@ class OptionsScoring:
                 parsed[key] = default_value
                 
         return parsed
+    
+    def get_dynamic_weights(self, ivr: float = None) -> Tuple[Dict[str, float], str, str]:
+        """
+        根据 IVR 动态调整评分权重
+        
+        市场状态划分：
+        - 恐慌期 (IVR > 80): 结构(Gamma)不再可靠，波动率(IV)均值回归是主导
+        - 平静期 (IVR < 20): 波动率已死，结构(Gamma)是唯一波动源
+        - 正常期 (20 <= IVR <= 80): 维持默认配置
+        
+        Args:
+            ivr: IV Rank 值 (0-100)，如果未提供则从 market_params 获取
+            
+        Returns:
+            (权重字典, 市场状态, 状态说明) 元组
+        """
+        # 获取 IVR
+        if ivr is None:
+            ivr = self.market_params.get('ivr', 50.0)
+        
+        # 获取动态权重配置
+        dw = self.dynamic_weights_config
+        
+        # 获取阈值
+        panic_threshold = dw.get('panic', {}).get('ivr_threshold', 80)
+        calm_threshold = dw.get('calm', {}).get('ivr_threshold', 20)
+        
+        if ivr > panic_threshold:
+            # 恐慌期：波动率均值回归是主导
+            panic_config = dw.get('panic', {})
+            weights = {
+                'GAMMA': panic_config.get('gamma', 0.2),
+                'BREAK': panic_config.get('break', 0.2),
+                'DIR': panic_config.get('direction', 0.2),
+                'IV': panic_config.get('iv', 0.4)
+            }
+            regime = 'panic'
+            description = panic_config.get('description', '恐慌期：IV均值回归主导，结构信号弱化')
+            
+        elif ivr < calm_threshold:
+            # 平静期：结构是唯一波动源
+            calm_config = dw.get('calm', {})
+            weights = {
+                'GAMMA': calm_config.get('gamma', 0.5),
+                'BREAK': calm_config.get('break', 0.3),
+                'DIR': calm_config.get('direction', 0.1),
+                'IV': calm_config.get('iv', 0.1)
+            }
+            regime = 'calm'
+            description = calm_config.get('description', '平静期：结构主导，IV信号无效')
+            
+        else:
+            # 正常期：使用默认权重
+            normal_config = dw.get('normal', {})
+            weights = {
+                'GAMMA': normal_config.get('gamma', self.env.get('SCORE_WEIGHT_GAMMA_REGIME', 0.4)),
+                'BREAK': normal_config.get('break', self.env.get('SCORE_WEIGHT_BREAK_WALL', 0.3)),
+                'DIR': normal_config.get('direction', self.env.get('SCORE_WEIGHT_DIRECTION', 0.2)),
+                'IV': normal_config.get('iv', self.env.get('SCORE_WEIGHT_IV', 0.1))
+            }
+            regime = 'normal'
+            description = normal_config.get('description', '正常期：平衡权重')
+        
+        return weights, regime, description
     
     def calculate_gamma_regime_score(self, gamma_metrics: Dict) -> Dict:
         """
@@ -342,50 +412,76 @@ class OptionsScoring:
     
     def calculate_total_score(self, scores: Dict) -> Dict:
         """
-        综合评分计算（更新权重分配）
+        综合评分计算（动态权重版）
     
-        原始四维 → 五维：
-        - Gamma Regime: 40% → 35%
-        - Break Wall: 30% → 25%
-        - Direction: 20% → 20%
-        - IV: 10% → 10%
-        - Index Consistency: 10%
+        根据 IVR 动态调整权重：
+        - 恐慌期 (IVR > 80): GAMMA=0.2, BREAK=0.2, DIR=0.2, IV=0.4
+        - 平静期 (IVR < 20): GAMMA=0.5, BREAK=0.3, DIR=0.1, IV=0.1
+        - 正常期 (20-80): GAMMA=0.4, BREAK=0.3, DIR=0.2, IV=0.1
         
         Args:
             scores: 各维度评分字典
             
         Returns:
-            总分和权重分解
+            总分、权重分解和市场状态
         """
         gamma_score = scores['gamma']['score']
         break_score = scores['break_wall']['score']
         direction_score = scores['direction']['score']
         iv_score = scores['iv']['score']
-        index_score = scores['index_consistency']['score']  
+        index_score = scores['index_consistency']['score']
         
-        w = self.env
+        # 获取动态权重
+        ivr = self.market_params.get('ivr', 50.0)
+        dynamic_weights, weight_regime, regime_description = self.get_dynamic_weights(ivr)
+        
+        # 指数权重保持不变
+        index_weight = self.env.get('SCORE_WEIGHT_INDEX_CONSISTENCY', 0.1)
+        
+        # 调整四维权重使其与指数权重总和为 1.0
+        # 四维权重需要按比例缩放到 (1 - index_weight)
+        scale_factor = 1.0 - index_weight
+        w = {
+            'GAMMA': dynamic_weights['GAMMA'] * scale_factor,
+            'BREAK': dynamic_weights['BREAK'] * scale_factor,
+            'DIR': dynamic_weights['DIR'] * scale_factor,
+            'IV': dynamic_weights['IV'] * scale_factor,
+            'INDEX': index_weight
+        }
         
         # 加权计算
         total = (
-            gamma_score * w['SCORE_WEIGHT_GAMMA_REGIME'] +
-            break_score * w['SCORE_WEIGHT_BREAK_WALL'] +
-            direction_score * w['SCORE_WEIGHT_DIRECTION'] +
-            iv_score * w['SCORE_WEIGHT_IV'] +
-            index_score * w['SCORE_WEIGHT_INDEX_CONSISTENCY']
+            gamma_score * w['GAMMA'] +
+            break_score * w['BREAK'] +
+            direction_score * w['DIR'] +
+            iv_score * w['IV'] +
+            index_score * w['INDEX']
         )
+        
         # 详细分解
         breakdown = (
-            f"{gamma_score}×{w['SCORE_WEIGHT_GAMMA_REGIME']:.1f}+"
-            f"{break_score}×{w['SCORE_WEIGHT_BREAK_WALL']:.1f}+"
-            f"{direction_score}×{w['SCORE_WEIGHT_DIRECTION']:.1f}+"
-            f"{iv_score}×{w['SCORE_WEIGHT_IV']:.1f}="
-            f"{index_score}×{w['SCORE_WEIGHT_INDEX_CONSISTENCY']:.1f}"
+            f"[{weight_regime}] "
+            f"Gamma:{gamma_score}×{w['GAMMA']:.2f}+"
+            f"Break:{break_score}×{w['BREAK']:.2f}+"
+            f"Dir:{direction_score}×{w['DIR']:.2f}+"
+            f"IV:{iv_score}×{w['IV']:.2f}+"
+            f"Index:{index_score}×{w['INDEX']:.2f}="
             f"{total:.1f}"
         )
         
         return {
             "total_score": round(total, 1),
-            "weight_breakdown": breakdown
+            "weight_breakdown": breakdown,
+            "weight_regime": weight_regime,
+            "regime_description": regime_description,
+            "ivr_used": ivr,
+            "applied_weights": {
+                "gamma": round(w['GAMMA'], 3),
+                "break": round(w['BREAK'], 3),
+                "direction": round(w['DIR'], 3),
+                "iv": round(w['IV'], 3),
+                "index": round(w['INDEX'], 3)
+            }
         }
     
     def check_entry_conditions(self, target_data: Dict, total_score: float) -> Dict:
@@ -634,7 +730,10 @@ class OptionsScoring:
                 "iv_score": iv_result['score'],
                 "iv_score_rationale": iv_result['rationale'],
                 "total_score": total_result['total_score'],
-                "weight_breakdown": total_result['weight_breakdown']
+                "weight_breakdown": total_result['weight_breakdown'],
+                "weight_regime": total_result.get('weight_regime', 'normal'),
+                "regime_description": total_result.get('regime_description', ''),
+                "applied_weights": total_result.get('applied_weights', {})
             },
             "entry_threshold_check": entry_result['entry_threshold_check'],
             "entry_rationale": entry_result['entry_rationale'],

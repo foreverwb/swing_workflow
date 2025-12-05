@@ -178,12 +178,40 @@ exit_rules:
 # 10. 评分权重配置
 # ======================================
 scoring:
-  # 四维评分权重（总和必须为 1.0）
+  # 四维评分权重（默认值，IVR 正常期使用）
   weight_gamma_regime: 0.4           # Gamma状态权重
   weight_break_wall: 0.3             # 破墙可能性权重
   weight_direction: 0.2              # 方向一致性权重
   weight_iv: 0.1                     # IV动态权重
   weight_index_consistency: 0.10     # 指数权重
+  
+  # 动态权重配置（根据 IVR 自动调整）
+  dynamic_weights:
+    # 恐慌期 (IVR > 80)：波动率均值回归是主导，结构不可靠
+    panic:
+      ivr_threshold: 80              # IVR 上限阈值
+      gamma: 0.2
+      break: 0.2
+      direction: 0.2
+      iv: 0.4
+      description: "恐慌期：IV均值回归主导，结构信号弱化"
+    
+    # 平静期 (IVR < 20)：波动率已死，结构是唯一波动源
+    calm:
+      ivr_threshold: 20              # IVR 下限阈值
+      gamma: 0.5
+      break: 0.3
+      direction: 0.1
+      iv: 0.1
+      description: "平静期：结构主导，IV信号无效"
+    
+    # 正常期 (20 <= IVR <= 80)：使用默认权重
+    normal:
+      gamma: 0.4
+      break: 0.3
+      direction: 0.2
+      iv: 0.1
+      description: "正常期：平衡权重"
   
   index_gap_threshold_ratio: 0.5     # 破墙距离阈值（倍数）
   index_conflict_penalty: -1         # 方向冲突惩罚分
@@ -243,7 +271,8 @@ vision:
   #   - 更精确的曲线识别（Gamma分布、Skew）
   #   - 更清晰的标签读取（图表注释、Legend）
 
-  # 10. Beta 敏感度配置
+# ======================================
+# 10. Beta 敏感度配置
 # ======================================
 beta:
   # 板块默认 Beta 值
