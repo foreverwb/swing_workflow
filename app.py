@@ -257,6 +257,141 @@ def analyze(symbol: str, folder: str, params_input: str, cache: str, output: str
 
 
 # ============================================================
+# quick 命令 - 快速分析（自动从 VA API 获取参数）
+# 工作流标识: Meso → Micro
+# ============================================================
+
+@cli.command(name='quick')
+@click.argument('symbol')
+@click.option('-v', '--vix', type=float, required=True, help='VIX 指数（必需）')
+@click.option('-f', '--folder', type=click.Path(exists=True), help='数据文件夹路径')
+@click.option('-c', '--cache', help='缓存文件名')
+@click.option('-o', '--output', type=click.Path(), help='输出文件路径')
+@click.option('--va-url', default='http://localhost:8668', help='VA API 服务地址')
+@click.option('--model-config', default='config/model_config.yaml', help='模型配置文件')
+def quick(symbol: str, vix: float, folder: str, cache: str, output: str, va_url: str, model_config: str):
+    """
+    快速分析命令 - 自动从 VA API 获取市场参数
+    
+    仅需指定 symbol 和 VIX，其他参数（IVR/IV30/HV20/财报日期）自动从
+    volatility_analysis 服务获取。
+    
+    \b
+    工作流标识: Meso → Micro
+    
+    \b
+    前置条件:
+      确保 volatility_analysis 服务正在运行:
+      cd volatility_analysis && python app.py
+    
+    \b
+    示例:
+      # 生成命令清单（Agent2）
+      quick NVDA -v 18.5
+      
+      # 完整分析（Agent3 → Pipeline）
+      quick NVDA -v 18.5 -f ./data/images -c NVDA_20251206.json
+    """
+    from utils.va_client import VAClient, VAClientError
+    
+    setup_logging()
+    symbol = symbol.upper()
+    
+    # 输出工作流标识
+    console.print(f"\n[bold magenta]═══════════════════════════════════════[/bold magenta]")
+    console.print(f"[bold magenta]       Meso → Micro 分析工作流        [/bold magenta]")
+    console.print(f"[bold magenta]═══════════════════════════════════════[/bold magenta]")
+    
+    console.print(f"\n[bold cyan]🚀 Swing Quant - 快速分析 {symbol}[/bold cyan]")
+    console.print(f"[dim]VA API: {va_url}[/dim]")
+    
+    # 1. 从 VA API 获取参数
+    console.print(f"\n[yellow]📡 正在从 VA API 获取 {symbol} 的市场参数...[/yellow]")
+    
+    client = VAClient(base_url=va_url)
+    
+    try:
+        api_params = client.get_params(symbol, vix=vix)
+        
+        # 验证必要参数
+        missing = [k for k in ['ivr', 'iv30', 'hv20'] if api_params.get(k) is None]
+        if missing:
+            console.print(f"[red]❌ VA API 返回的数据缺少必要字段: {missing}[/red]")
+            sys.exit(1)
+        
+        # 构建完整参数
+        params = {
+            'vix': vix,
+            'ivr': api_params['ivr'],
+            'iv30': api_params['iv30'],
+            'hv20': api_params['hv20'],
+        }
+        
+        if api_params.get('earning_date'):
+            params['earning_date'] = api_params['earning_date']
+        
+        console.print(f"[green]✅ 参数获取成功[/green]")
+        console.print(f"[dim]   VIX={params['vix']}, IVR={params['ivr']}, IV30={params['iv30']}, HV20={params['hv20']}[/dim]")
+        console.print(f"[dim]   VRP={params['iv30']/params['hv20']:.2f}[/dim]")
+        if params.get('earning_date'):
+            console.print(f"[dim]   财报日期={params['earning_date']}[/dim]")
+        
+    except VAClientError as e:
+        console.print(f"[red]❌ VA API 调用失败: {e}[/red]")
+        console.print("[yellow]💡 请确保 volatility_analysis 服务正在运行:[/yellow]")
+        console.print("[dim]   cd volatility_analysis && python app.py[/dim]")
+        sys.exit(1)
+    
+    # 2. 验证参数
+    params = validate_market_params(params)
+    
+    # 3. 加载模型配置
+    model_client = ModelClientFactory.create_from_config(model_config)
+    env_vars = {
+        'config': config,
+        'market_params': params,
+        'tag': 'Meso'  # 添加工作流标识
+    }
+    
+    # 4. 判断模式并执行
+    if not folder:
+        # 模式1: 生成命令清单
+        mode = 'full'
+    else:
+        # 模式2: 完整分析
+        if not cache:
+            console.print("[red]❌ 完整分析需要指定缓存文件[/red]")
+            console.print(f"[yellow]💡 示例: q {symbol} -v {vix} -f {folder} -c {symbol}_20251206.json[/yellow]")
+            sys.exit(1)
+        
+        # 从缓存加载动态参数
+        cached = load_cache_params(symbol, cache)
+        env_vars['dyn_params'] = cached['dyn_params']
+        
+        console.print(f"[green]✅ 从缓存加载动态参数[/green]")
+        console.print(f"[dim]   场景={cached['dyn_params'].get('scenario')}[/dim]")
+        
+        mode = 'full'
+    
+    # 5. 执行分析
+    command = AnalyzeCommand(console, model_client, env_vars)
+    try:
+        command.execute(
+            symbol=symbol,
+            folder=folder,
+            output=output,
+            mode=mode,
+            cache=cache,
+            market_params=env_vars.get('market_params'),
+            dyn_params=env_vars.get('dyn_params'),
+            tag=env_vars.get('tag')  # 传递 tag 参数
+        )
+    except KeyboardInterrupt:
+        console.print("\n[yellow]⚠️ 用户中断[/yellow]")
+        sys.exit(0)
+
+
+# ============================================================
 # update 命令 - 增量更新
 # ============================================================
 

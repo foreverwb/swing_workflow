@@ -27,7 +27,7 @@ class AnalyzeCommand(BaseCommand):
         output: str = None,
         mode: str = 'full',
         cache: str = None,
-        **kwargs  # 接收额外参数（包括 market_params, dyn_params）
+        **kwargs  # 接收额外参数（包括 market_params, dyn_params, tag）
     ) -> Dict[str, Any]:
         """
         执行分析命令
@@ -41,6 +41,7 @@ class AnalyzeCommand(BaseCommand):
             **kwargs: 额外参数
                 - market_params: Dict[str, float] (vix, ivr, iv30, hv20)
                 - dyn_params: Dict (从缓存加载的动态参数，仅完整分析模式)
+                - tag: str (工作流标识，如 'Meso')
         """
         # 1. 验证股票代码
         is_valid, result = self.validate_symbol(symbol)
@@ -52,6 +53,7 @@ class AnalyzeCommand(BaseCommand):
         # 2. 提取市场参数
         market_params = kwargs.get('market_params')
         dyn_params = kwargs.get('dyn_params')  #  从缓存加载的动态参数
+        tag = kwargs.get('tag')  # 工作流标识
         
         # 3. 判断模式
         if not folder:
@@ -79,7 +81,7 @@ class AnalyzeCommand(BaseCommand):
                 self.print_error(f"市场参数验证失败: {e}")
                 sys.exit(1)
             
-            return self._generate_command_list(symbol, pre_calc_params)
+            return self._generate_command_list(symbol, pre_calc_params, tag=tag)
         
         else:
             # ========== 模式B: 完整分析（Agent3 → Pipeline）==========
@@ -116,13 +118,14 @@ class AnalyzeCommand(BaseCommand):
                 market_params=market_params  #  传递市场参数用于保存
             )
     
-    def _generate_command_list(self, symbol: str, pre_calc: Dict) -> Dict[str, Any]:
+    def _generate_command_list(self, symbol: str, pre_calc: Dict, tag: str = None) -> Dict[str, Any]:
         """
         生成命令清单（Agent2）
         
         Args:
             symbol: 股票代码
             pre_calc: MarketStateCalculator 计算的动态参数
+            tag: 工作流标识（如 'Meso'）
         """
         self.console.print(Panel.fit(
             f"[bold green]📋 生成命令清单: {symbol.upper()}[/bold green]\n"
@@ -187,22 +190,33 @@ class AnalyzeCommand(BaseCommand):
             cache_path = cache_manager.initialize_cache_with_params(
                 symbol=symbol.upper(),
                 market_params=market_params,
-                dyn_params=pre_calc
+                dyn_params=pre_calc,
+                tag=tag  # 传递 tag 参数到缓存管理器
             )
             if cache_path:
                 # 提取文件名
                 cache_filename = Path(cache_path).name
                 
                 self.console.print(f"[green]✅ 缓存已创建: {cache_path}[/green]")
+                if tag:
+                    self.console.print(f"[dim]   工作流标识: tag={tag}[/dim]")
                 self.console.print(f"[dim]   后续分析将自动从此文件读取市场参数[/dim]")
                 
-                #  简化的命令提示（不再需要市场参数）
+                #  简化的命令提示（根据 tag 显示不同的命令）
                 self.console.print(f"\n[yellow]💡 提示：抓取数据后，请使用以下命令执行分析:[/yellow]")
-                self.console.print(
-                    f"[cyan]   python app.py analyze -s {symbol.upper()} "
-                    f"-f <数据文件夹路径> "
-                    f"--cache {cache_filename}[/cyan]"
-                )
+                if tag == 'Meso':
+                    self.console.print(
+                        f"[cyan]   python app.py q {symbol.upper()} "
+                        f"-v <VIX值> "
+                        f"-f <数据文件夹路径> "
+                        f"-c {cache_filename}[/cyan]"
+                    )
+                else:
+                    self.console.print(
+                        f"[cyan]   python app.py analyze -s {symbol.upper()} "
+                        f"-f <数据文件夹路径> "
+                        f"--cache {cache_filename}[/cyan]"
+                    )
             else:
                 self.console.print("[red]⚠️ 缓存初始化失败（可能已存在）[/red]")
             
@@ -210,7 +224,8 @@ class AnalyzeCommand(BaseCommand):
                 "status": "success", 
                 "content": content, 
                 "pre_calc": pre_calc,
-                "cache_path": str(cache_path) if cache_path else None
+                "cache_path": str(cache_path) if cache_path else None,
+                "tag": tag
             }
         
         except Exception as e:

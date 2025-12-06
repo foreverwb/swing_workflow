@@ -702,7 +702,8 @@ class CacheManager:
         symbol: str,
         market_params: Dict[str, float],
         dyn_params: Dict[str, Any],
-        start_date: str = None
+        start_date: str = None,
+        tag: str = None
     ) -> Path:
         """
         初始化缓存文件（仅市场参数 + 空占位符）
@@ -713,6 +714,7 @@ class CacheManager:
             market_params: 市场参数 (vix, ivr, iv30, hv20)
             dyn_params: 动态参数 (dyn_strikes, dyn_dte_mid, ...)
             start_date: 分析开始日期（YYYYMMDD），默认今天
+            tag: 工作流标识（如 'Meso'）
             
         Returns:
             缓存文件路径
@@ -740,6 +742,9 @@ class CacheManager:
             "symbol": symbol,
             "start_date": datetime.strptime(start_date, "%Y%m%d").strftime("%Y-%m-%d"),
             "created_at": datetime.now().isoformat(),
+            
+            # ✅ 工作流标识
+            "tag": tag,
             
             # ✅ 市场参数
             "market_params": {
@@ -778,6 +783,8 @@ class CacheManager:
                 json.dump(cache_data, f, ensure_ascii=False, indent=2)
             
             logger.success(f"✅ 初始化缓存已创建: {cache_path}")
+            if tag:
+                logger.info(f"  • 工作流标识: tag={tag}")
             logger.info(f"  • 场景: {dyn_params.get('scenario')}")
             logger.info(f"  • VRP: {cache_data['market_params']['vrp']:.2f}")
             logger.info(f"  • 文件大小: {cache_path.stat().st_size / 1024:.2f} KB")

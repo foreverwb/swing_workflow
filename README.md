@@ -1,7 +1,7 @@
 ### Shell Config
 ```
 cd ~/quantitative_workflow  
-echo "alias sq='python $(pwd)/app.py'" >> ~/.zshrc
+echo "alias quick='python $(pwd)/app.py quick'" >> ~/.zshrc
 echo "alias analyze='python $(pwd)/app.py analyze'" >> ~/.zshrc
 echo "alias update='python $(pwd)/app.py update'" >> ~/.zshrc
 echo "alias refresh='python $(pwd)/app.py refresh'" >> ~/.zshrc
@@ -10,8 +10,11 @@ source ~/.zshrc
 
 ### 生成命令清单（两种方式）
 ```
+quick symbol -v {.vix}
+
+---
+
 analyze symbol -p '{"vix":18,"ivr":65,"iv30":42,"hv20":38}'  # JSON 字符串
-analyze symbol -p params.json                                  # JSON 文件
 ```
 
 ### 完整分析
