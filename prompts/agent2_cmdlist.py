@@ -60,11 +60,24 @@ def get_system_prompt(symbol: str, pre_calc: dict) -> str:
 #### 4. iv_path
 v_path: {symbol} 7D ATM-IV 对比 3 日 skew 数据
 
-### 扩展命令（条件触发）
-# 如果 dyn_dte_mid 已经是月度(m)
-!gexr {symbol} {strikes} {dte_long}
+#### 5. 实时性与结构验证 (Validation Layers) 
+# [噪音过滤] 确认今日结构中有多少是收盘即废的 0DTE
+!0dte {symbol}
 
-### 指数背景（必需）
+# [实时意图] 确认今日资金流向 (验证 GEX 墙的虚实)
+!volumen {symbol} {strikes} {dte_short}
+
+# [波动率底牌] 确认 Dealer 对 IV 涨跌的真实敞口
+!vexn {symbol} {strikes} {dte_mid}
+
+# [时间引力] 确认 Dealer 是否有动力钉住价格 (辅助 Iron Condor 选点)
+!tex {symbol} {strikes} {dte_mid} True
+
+#### 6. 扩展命令（条件触发）
+# 如果 dyn_dte_mid 已经是月度(m)
+!gexr {symbol} {strikes} {dte_long} m
+
+#### 7. 指数背景（必需）
 !gexn SPX {window} 98
 !skew SPX ivmid atm 7
 !skew SPX ivmid atm 14
@@ -81,7 +94,6 @@ v_path: {symbol} 7D ATM-IV 对比 3 日 skew 数据
 - 执行命令
 2. 确保参数替换正确 (当前参数已动态计算完成)
 """
-
 
 def get_user_prompt(symbol: str, market_params: dict = None) -> str:
     """

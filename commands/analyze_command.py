@@ -140,7 +140,7 @@ class AnalyzeCommand(BaseCommand):
         agent_executor = AgentExecutor(
             self.model_client,
             self.env_vars,
-            enable_pretty_print=True
+            enable_pretty_print=False
         )
         
         self.console.print(f"\n[green]🚀 开始生成 {symbol.upper()} 的动态命令清单[/green]\n")
