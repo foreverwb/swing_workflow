@@ -12,7 +12,6 @@ from typing import Dict, Any, Optional, Tuple
 from datetime import datetime
 from utils.config_loader import config
 
-
 class FieldCalculator:
     """字段关联计算器（重构版）"""
     

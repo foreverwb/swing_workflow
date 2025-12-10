@@ -59,67 +59,6 @@ agents:
     temperature: 0.5
     max_tokens: 4096
 
-# ========================================
-# 多提供商混合编排示例
-# ========================================
-
-# 示例1: 主要使用 DMXapi，关键 Agent 使用 Claude 官方
-# agents:
-#   agent2:
-#     provider: dmxapi
-#     model: gpt-4o-mini
-#   agent5:
-#     provider: anthropic          # 直连 Anthropic
-#     model: claude-sonnet-4-20250514
-#     api_key: ""                  # 从 ANTHROPIC_API_KEY 读取
-#     base_url: "https://api.anthropic.com"
-
-# 示例2: 全部使用 Claude（高质量但成本高）
-# default:
-#   provider: anthropic
-#   model: claude-sonnet-4-20250514
-#   api_key: ""
-#   base_url: "https://api.anthropic.com"
-
-# 示例3: 成本优化编排
-# agents:
-#   agent2:
-#     model: gpt-4o-mini           # 简单任务
-#   agent3:
-#     model: gpt-4o                # 需要视觉
-#   agent5:
-#     model: claude-sonnet-4-20250514  # 复杂推理
-#   agent6:
-#     model: claude-sonnet-4-20250514  # 复杂推理
-#   agent7:
-#     model: gpt-4o                # 对比排序
-#   agent8:
-#     model: claude-sonnet-4-20250514  # 优秀写作
-
-# ========================================
-# API Key 配置说明
-# ========================================
-
-# 推荐方式：使用环境变量
-# Linux/Mac:
-#   export DMXAPI_KEY="your_key"
-#   export ANTHROPIC_API_KEY="your_key"
-#   export OPENAI_API_KEY="your_key"
-
-# Windows:
-#   set DMXAPI_KEY=your_key
-#   set ANTHROPIC_API_KEY=your_key
-#   set OPENAI_API_KEY=your_key
-
-# 或直接在配置中指定（不推荐，有安全风险）:
-# agents:
-#   agent5:
-#     api_key: "sk-ant-xxx"
-
-# ========================================
-# 高级配置
-# ========================================
-
 # 重试配置
 max_retries: 3
 retry_delay: 2

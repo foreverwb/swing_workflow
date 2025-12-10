@@ -1,7 +1,7 @@
 import json
 from typing import Dict, Any, Tuple
 from utils.formatters import F  # 安全格式化工具
-
+from utils.config_loader import config
 
 def main(agent3_output: dict, technical_score: float = 0, **env_vars) -> dict:
     """
@@ -15,9 +15,9 @@ def main(agent3_output: dict, technical_score: float = 0, **env_vars) -> dict:
         {"result": 评分结果 JSON 字符串}
     """
     try:
-    
+        market_params = env_vars.get('market_params', {})
         # 初始化评分引擎
-        scoring = OptionsScoring(env_vars)    
+        scoring = OptionsScoring(market_params)    
         # 执行评分计算
         result = scoring.process(agent3_output)
         return result
@@ -40,58 +40,15 @@ class OptionsScoring:
     def __init__(self, env_vars: Dict[str, Any]):
         """
         初始化环境变量阈值
-        
-        Args:
-            env_vars: 环境变量字典，包含所有阈值参数
         """
-        self.env = self._parse_env_vars(env_vars)
         self.market_params = env_vars.get('market_params', {})
+        self.scoring_config = config.get_section('scoring')
+        self.gamma_config = config.get_section('gamma')
+        self.direction_config = config.get_section('direction')
+        self.pw_config = config.get_section('pw_calculation')
         
-        # 获取动态权重配置
-        config = env_vars.get('config')
-        if config:
-            self.dynamic_weights_config = config.get('scoring.dynamic_weights', {})
-        else:
-            self.dynamic_weights_config = {}
+        self.dynamic_weights_config = config.get('scoring.dynamic_weights', {})
         
-    def _parse_env_vars(self, env_vars: Dict[str, Any]) -> Dict[str, float]:
-        """解析并验证环境变量"""
-        parsed = {}
-        
-        # 必需的环境变量及其默认值
-        defaults = {
-            'SCORE_WEIGHT_GAMMA_REGIME': env_vars["SCORE_WEIGHT_GAMMA_REGIME"],
-            'SCORE_WEIGHT_BREAK_WALL': env_vars["SCORE_WEIGHT_BREAK_WALL"],
-            'SCORE_WEIGHT_DIRECTION': env_vars["SCORE_WEIGHT_DIRECTION"],
-            'SCORE_WEIGHT_IV': env_vars["SCORE_WEIGHT_IV"],
-            'BREAK_WALL_THRESHOLD_LOW': env_vars["BREAK_WALL_THRESHOLD_LOW"],
-            'BREAK_WALL_THRESHOLD_HIGH': env_vars["BREAK_WALL_THRESHOLD_HIGH"],
-            'MONTHLY_OVERRIDE_THRESHOLD': env_vars["MONTHLY_OVERRIDE_THRESHOLD"],
-            'MONTHLY_CLUSTER_STRENGTH_RATIO': env_vars["MONTHLY_CLUSTER_STRENGTH_RATIO"],
-            'CLUSTER_STRENGTH_THRESHOLD_S': env_vars["CLUSTER_STRENGTH_THRESHOLD_S"],
-            'CLUSTER_STRENGTH_THRESHOLD_T': env_vars["CLUSTER_STRENGTH_THRESHOLD_T"],
-            'DEX_SAME_DIR_THRESHOLD_STRONG': env_vars["DEX_SAME_DIR_THRESHOLD_STRONG"],
-            'DEX_SAME_DIR_THRESHOLD_MEDIUM': env_vars["DEX_SAME_DIR_THRESHOLD_MEDIUM"],
-            'DEX_SAME_DIR_THRESHOLD_WEAK': env_vars["DEX_SAME_DIR_THRESHOLD_WEAK"],
-            'PW_DEBIT_VANNA_WEIGHT_HIGH': env_vars["PW_DEBIT_VANNA_WEIGHT_HIGH"],
-            'PW_DEBIT_VANNA_WEIGHT_MEDIUM': env_vars["PW_DEBIT_VANNA_WEIGHT_MEDIUM"],
-            'PW_DEBIT_VANNA_WEIGHT_LOW': env_vars["PW_DEBIT_VANNA_WEIGHT_LOW"],
-            'ENTRY_THRESHOLD_SCORE': env_vars["ENTRY_THRESHOLD_SCORE"],
-            'ENTRY_THRESHOLD_PROBABILITY': env_vars["ENTRY_THRESHOLD_PROBABILITY"],
-            'LIGHT_POSITION_PROBABILITY': env_vars["LIGHT_POSITION_PROBABILITY"],
-            'INDEX_GAP_THRESHOLD_RATIO': env_vars.get("INDEX_GAP_THRESHOLD_RATIO", 0.5),
-            'INDEX_CONFLICT_PENALTY': env_vars.get("INDEX_CONFLICT_PENALTY", -1),
-            'INDEX_CONSISTENCY_BONUS': env_vars.get("INDEX_CONSISTENCY_BONUS", 1),
-        }
-        for key, default_value in defaults.items():
-            value = env_vars.get(key, default_value)
-            # 转换为 float
-            try:
-                parsed[key] = float(value)
-            except (ValueError, TypeError):
-                parsed[key] = default_value
-                
-        return parsed
     
     def get_dynamic_weights(self, ivr: float = None) -> Tuple[Dict[str, float], str, str]:
         """
@@ -147,10 +104,10 @@ class OptionsScoring:
             # 正常期：使用默认权重
             normal_config = dw.get('normal', {})
             weights = {
-                'GAMMA': normal_config.get('gamma', self.env.get('SCORE_WEIGHT_GAMMA_REGIME', 0.4)),
-                'BREAK': normal_config.get('break', self.env.get('SCORE_WEIGHT_BREAK_WALL', 0.3)),
-                'DIR': normal_config.get('direction', self.env.get('SCORE_WEIGHT_DIRECTION', 0.2)),
-                'IV': normal_config.get('iv', self.env.get('SCORE_WEIGHT_IV', 0.1))
+                'GAMMA': normal_config.get('gamma', self.scoring_config.weight_gamma_regime),
+                'BREAK': normal_config.get('break', self.scoring_config.weight_break_wall),
+                'DIR': normal_config.get('direction', self.scoring_config.weight_direction),
+                'IV': normal_config.get('iv', self.scoring_config.weight_iv)
             }
             regime = 'normal'
             description = normal_config.get('description', '正常期：平衡权重')
@@ -221,18 +178,18 @@ class OptionsScoring:
         
         # 步骤1: 判断阈值
         if monthly_override:
-            threshold = self.env['MONTHLY_OVERRIDE_THRESHOLD']
-            threshold_note = f"月度簇强度≥周度{self.env['MONTHLY_CLUSTER_STRENGTH_RATIO']}倍"
+            threshold = self.gamma_config.monthly_override_threshold
+            threshold_note = f"月度簇强度≥周度{self.gamma_config.monthly_cluster_strength_ratio}倍"
         else:
-            threshold = self.env['BREAK_WALL_THRESHOLD_HIGH']
+            threshold = self.gamma_config.break_wall_threshold_high
             threshold_note = f"标准阈值{threshold}×EM1$"
         
         # 步骤2: 评估破墙概率
-        if gap_distance < self.env['BREAK_WALL_THRESHOLD_LOW']:
+        if gap_distance < self.gamma_config.break_wall_threshold_low:
             break_probability = "高"
             base_score = 9
             prob_desc = "距离近"
-        elif gap_distance < self.env['BREAK_WALL_THRESHOLD_HIGH']:
+        elif gap_distance < self.gamma_config.break_wall_threshold_high:
             break_probability = "中"
             base_score = 6
             prob_desc = "距离适中"
@@ -242,17 +199,17 @@ class OptionsScoring:
             prob_desc = "距离远"
         
         # 步骤3: 簇强度调整
-        if cluster_strength >= self.env['CLUSTER_STRENGTH_THRESHOLD_S']:
+        if cluster_strength >= self.gamma_config.cluster_strength_threshold_s:
             adjustment = -1
-            cluster_note = f"簇强度{cluster_strength:.2f}≥{self.env['CLUSTER_STRENGTH_THRESHOLD_S']}，主墙极强"
+            cluster_note = f"簇强度{cluster_strength:.2f}≥{self.gamma_config.cluster_strength_threshold_s}，主墙极强"
             cluster_desc = "极强阻力"
-        elif cluster_strength >= self.env['CLUSTER_STRENGTH_THRESHOLD_T']:
+        elif cluster_strength >= self.gamma_config.cluster_strength_threshold_t:
             adjustment = 0
-            cluster_note = f"簇强度{cluster_strength:.2f}在{self.env['CLUSTER_STRENGTH_THRESHOLD_T']}-{self.env['CLUSTER_STRENGTH_THRESHOLD_S']}，中等强度"
+            cluster_note = f"簇强度{cluster_strength:.2f}在{self.gamma_config.cluster_strength_threshold_t}-{self.gamma_config.cluster_strength_threshold_s}，中等强度"
             cluster_desc = "中等阻力"
         else:
             adjustment = 1
-            cluster_note = f"簇强度{cluster_strength:.2f}<{self.env['CLUSTER_STRENGTH_THRESHOLD_T']}，较易突破"
+            cluster_note = f"簇强度{cluster_strength:.2f}<{self.gamma_config.cluster_strength_threshold_t}，较易突破"
             cluster_desc = "较弱阻力"
         
         final_score = max(1, min(10, base_score + adjustment))  # 限制在 1-10
@@ -302,28 +259,28 @@ class OptionsScoring:
         
         # 计算 vanna 权重
         vanna_weight_map = {
-            'high': self.env['PW_DEBIT_VANNA_WEIGHT_HIGH'],
-            'medium': self.env['PW_DEBIT_VANNA_WEIGHT_MEDIUM'],
-            'low': self.env['PW_DEBIT_VANNA_WEIGHT_LOW']
+            'high': self.pw_config.debit.vanna_weight_high,
+            'medium': self.pw_config.debit.vanna_weight_medium,
+            'low': self.pw_config.debit.vanna_weight_low
         }
         vanna_weight = vanna_weight_map.get(vanna_confidence, 0.3)
         
         # 判断方向强度
-        has_strong_dex = dex_same_dir >= self.env['DEX_SAME_DIR_THRESHOLD_STRONG']
+        has_strong_dex = dex_same_dir >= self.direction_config.dex_same_dir_threshold_strong
         has_clear_vanna = vanna_dir in ['up', 'down']
-        has_medium_vanna = vanna_weight >= self.env['PW_DEBIT_VANNA_WEIGHT_MEDIUM']
+        has_medium_vanna = vanna_weight >= self.pw_config.debit.vanna_weight_medium
         
         if has_strong_dex and has_clear_vanna and has_medium_vanna:
             direction_strength = "强方向信号"
             score = 9
             strength_desc = "DEX强+Vanna高置信"
             
-        elif dex_same_dir >= self.env['DEX_SAME_DIR_THRESHOLD_MEDIUM'] or vanna_weight == self.env['PW_DEBIT_VANNA_WEIGHT_MEDIUM']:
+        elif dex_same_dir >= self.direction_config.dex_same_dir_threshold_medium or vanna_weight == self.pw_config.debit.vanna_weight_medium:
             direction_strength = "中等方向信号"
             score = 6
             strength_desc = "DEX中等或Vanna中等置信"
             
-        elif dex_same_dir < self.env['DEX_SAME_DIR_THRESHOLD_WEAK'] or vanna_confidence == 'low':
+        elif dex_same_dir < self.direction_config.dex_same_dir_threshold_weak or vanna_confidence == 'low':
             direction_strength = "弱方向信号"
             score = 3
             strength_desc = "DEX弱或Vanna低置信"
@@ -333,9 +290,9 @@ class OptionsScoring:
             strength_desc = "信号模糊"
         
         # DEX 评价
-        if dex_same_dir >= self.env['DEX_SAME_DIR_THRESHOLD_STRONG']:
+        if dex_same_dir >= self.direction_config.dex_same_dir_threshold_strong:
             dex_eval = "强"
-        elif dex_same_dir >= self.env['DEX_SAME_DIR_THRESHOLD_MEDIUM']:
+        elif dex_same_dir >= self.direction_config.dex_same_dir_threshold_medium:
             dex_eval = "中等"
         else:
             dex_eval = "弱"
@@ -437,11 +394,11 @@ class OptionsScoring:
         dynamic_weights, weight_regime, regime_description = self.get_dynamic_weights(ivr)
         
         # 指数权重保持不变
-        index_weight = self.env.get('SCORE_WEIGHT_INDEX_CONSISTENCY', 0.1)
+        index_weight = self.scoring_config.weight_index_consistency
         
         # 调整四维权重使其与指数权重总和为 1.0
         # 四维权重需要按比例缩放到 (1 - index_weight)
-        scale_factor = 1.0 - index_weight
+        scale_factor = 1.0
         w = {
             'GAMMA': dynamic_weights['GAMMA'] * scale_factor,
             'BREAK': dynamic_weights['BREAK'] * scale_factor,
@@ -524,10 +481,10 @@ class OptionsScoring:
         
         # 条件3: DEX 同向性
         dex = directional.get('dex_same_dir_pct', 0)
-        if dex >= self.env['DEX_SAME_DIR_THRESHOLD_MEDIUM']:
-            conditions_met.append(f"条件3: dex_same_dir={dex:.1f}≥{self.env['DEX_SAME_DIR_THRESHOLD_MEDIUM']:.0f}%")
+        if dex >= self.direction_config.dex_same_dir_threshold_medium:
+            conditions_met.append(f"条件3: dex_same_dir={dex:.1f}≥{self.direction_config.dex_same_dir_threshold_medium:.0f}%")
         else:
-            conditions_failed.append(f"条件3: dex_same_dir={dex:.1f}<{self.env['DEX_SAME_DIR_THRESHOLD_MEDIUM']:.0f}%")
+            conditions_failed.append(f"条件3: dex_same_dir={dex:.1f}<{self.direction_config.dex_same_dir_threshold_medium:.0f}%")
         
         # 条件4: Vanna 置信度
         vanna_conf = directional.get('vanna_confidence', 'low')
@@ -541,17 +498,17 @@ class OptionsScoring:
         total_conditions = 4
         
         # 入场判定
-        if total_score >= self.env['ENTRY_THRESHOLD_SCORE'] and met_count >= 3:
+        if total_score >= self.scoring_config.entry_threshold_score and met_count >= 3:
             entry_check = "入场"
             rationale_parts = [
-                f"总分{total_score:.1f}≥{self.env['ENTRY_THRESHOLD_SCORE']:.1f}满足",
+                f"总分{total_score:.1f}≥{self.scoring_config.entry_threshold_score:.1f}满足",
                 f"关键信号：{met_count}/{total_conditions}个条件满足"
             ]
             
-        elif total_score >= self.env['ENTRY_THRESHOLD_SCORE'] and met_count >= 2:
+        elif total_score >= self.scoring_config.entry_threshold_score and met_count >= 2:
             entry_check = "轻仓试探"
             rationale_parts = [
-                f"总分{total_score:.1f}≥{self.env['ENTRY_THRESHOLD_SCORE']:.1f}满足",
+                f"总分{total_score:.1f}≥{self.scoring_config.entry_threshold_score:.1f}满足",
                 f"但关键信号仅{met_count}/{total_conditions}个条件满足",
                 "建议轻仓试探"
             ]
@@ -625,16 +582,16 @@ class OptionsScoring:
             )
         
         # 警示4: 簇强度极强
-        if cluster_strength >= self.env['CLUSTER_STRENGTH_THRESHOLD_S']:
+        if cluster_strength >= self.gamma_config.cluster_strength_threshold_s:
             warnings.append(
-                f"簇强度{cluster_strength:.2f}≥{self.env['CLUSTER_STRENGTH_THRESHOLD_S']:.1f}，"
+                f"簇强度{cluster_strength:.2f}≥{self.gamma_config.cluster_strength_threshold_s:.1f}，"
                 f"主墙极强，破墙难度高"
             )
         
         # 警示5: 簇强度接近极强阈值
-        elif cluster_strength >= self.env['CLUSTER_STRENGTH_THRESHOLD_S'] - 0.2:
+        elif cluster_strength >= self.gamma_config.cluster_strength_threshold_s - 0.2:
             warnings.append(
-                f"簇强度{cluster_strength:.2f}接近{self.env['CLUSTER_STRENGTH_THRESHOLD_S']:.1f}，"
+                f"簇强度{cluster_strength:.2f}接近{self.gamma_config.cluster_strength_threshold_s:.1f}，"
                 f"注意主墙阻力"
             )
         
@@ -794,9 +751,9 @@ class OptionsScoring:
         consistency_note = []
         
         # 从环境变量读取阈值参数
-        threshold_ratio = self.env.get('INDEX_GAP_THRESHOLD_RATIO', 0.5)
-        conflict_penalty = self.env.get('INDEX_CONFLICT_PENALTY', -1)
-        consistency_bonus = self.env.get('INDEX_CONSISTENCY_BONUS', 1)
+        threshold_ratio = self.scoring_config.index_gap_threshold_ratio
+        conflict_penalty = self.scoring_config.index_conflict_penalty
+        consistency_bonus = self.scoring_config.index_consistency_bonus
         
         # ========================================
         # 数据完整性检查

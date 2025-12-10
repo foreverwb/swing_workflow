@@ -1,15 +1,15 @@
 """
-Code 3: 策略计算引擎 (重构版)
+Code 3: 策略计算引擎 (重构版 - 修复配置访问)
 
 变更:
 1. 移除冗余的扁平化输出，改用嵌套结构
-2. 统一配置管理，减少重复代码
+2. 统一配置管理，修复 self.env 访问错误
 3. 新增 validation_metrics 处理逻辑
 """
 import json
 from typing import Dict, Any, Optional
 from dataclasses import dataclass, asdict, field
-
+from utils.config_loader import config
 
 # ============= 数据类定义 =============
 
@@ -78,49 +78,6 @@ class StrategyOutput:
     exit_params: Dict
     meta: Dict
 
-
-# ============= 配置常量 =============
-
-DEFAULT_ENV = {
-    # Greeks 目标范围
-    'CONSERVATIVE_DELTA_MIN': -0.1, 'CONSERVATIVE_DELTA_MAX': 0.1,
-    'CONSERVATIVE_THETA_MIN': 5.0, 'CONSERVATIVE_VEGA_MAX': -10.0,
-    'BALANCED_DELTA_RANGE': 0.2, 'BALANCED_THETA_MIN': 8.0,
-    'AGGRESSIVE_DELTA_MIN': 0.3, 'AGGRESSIVE_DELTA_MAX': 0.6, 'AGGRESSIVE_VEGA_MIN': 10.0,
-    
-    # DTE 选择
-    'DTE_GAP_HIGH_THRESHOLD': 3.0, 'DTE_GAP_MID_THRESHOLD': 2.0, 'DTE_MONTHLY_ADJUSTMENT': 7,
-    
-    # 行权价偏移 (EM1$ 倍数)
-    'STRIKE_CONSERVATIVE_LONG_OFFSET': 1.5, 'STRIKE_BALANCED_WING_OFFSET': 1.0,
-    'STRIKE_RATIO_SHORT_OFFSET': 0.5, 'STRIKE_RATIO_LONG_OFFSET': 1.5,
-    'STRIKE_AGGRESSIVE_LONG_OFFSET': 0.2,
-    
-    # RR 计算 - 信用 IVR 映射
-    'CREDIT_IVR_0_25': 0.20, 'CREDIT_IVR_25_50': 0.30,
-    'CREDIT_IVR_50_75': 0.40, 'CREDIT_IVR_75_100': 0.50,
-    
-    # RR 计算 - 借贷 IVR 映射
-    'DEBIT_IVR_0_40': 0.30, 'DEBIT_IVR_40_70': 0.40, 'DEBIT_IVR_70_100': 0.50,
-    
-    # Pw 计算 - 信用
-    'PW_CREDIT_BASE': 0.5, 'PW_CREDIT_CLUSTER_COEF': 0.1,
-    'PW_CREDIT_DISTANCE_PENALTY_COEF': 0.05, 'PW_CREDIT_MIN': 0.4, 'PW_CREDIT_MAX': 0.85,
-    
-    # Pw 计算 - 借贷
-    'PW_DEBIT_BASE': 0.3, 'PW_DEBIT_DEX_COEF': 0.1, 'PW_DEBIT_VANNA_COEF': 0.2,
-    'PW_DEBIT_VANNA_WEIGHT_HIGH': 1.0, 'PW_DEBIT_VANNA_WEIGHT_MEDIUM': 0.6,
-    'PW_DEBIT_VANNA_WEIGHT_LOW': 0.3, 'PW_DEBIT_MIN': 0.25, 'PW_DEBIT_MAX': 0.75,
-    
-    # Pw 计算 - 蝶式
-    'PW_BUTTERFLY_BODY_INSIDE': 0.65, 'PW_BUTTERFLY_BODY_OFFSET_1EM': 0.45,
-    
-    # 止盈止损
-    'PROFIT_TARGET_CREDIT_PCT': 30, 'PROFIT_TARGET_DEBIT_PCT': 60,
-    'STOP_LOSS_DEBIT_PCT': 50, 'STOP_LOSS_CREDIT_PCT': 150, 'TIME_DECAY_EXIT_DAYS': 3,
-}
-
-
 # ============= 主入口函数 =============
 
 def main(agent3_output: dict, agent5_output: dict, technical_score: float = 0, **env_vars) -> dict:
@@ -134,7 +91,9 @@ def main(agent3_output: dict, agent5_output: dict, technical_score: float = 0, *
         agent3_data = json.loads(agent3_output) if isinstance(agent3_output, str) else agent3_output
         agent5_data = json.loads(agent5_output) if isinstance(agent5_output, str) else agent5_output
         
-        calculator = StrategyCalculator(env_vars)
+        market_params = env_vars.get('market_params', {})
+        
+        calculator = StrategyCalculator(market_params=market_params)
         return calculator.process(agent3_data, agent5_data, technical_score)
         
     except Exception as e:
@@ -151,20 +110,14 @@ def main(agent3_output: dict, agent5_output: dict, technical_score: float = 0, *
 class StrategyCalculator:
     """策略计算引擎 (重构版)"""
     
-    def __init__(self, env_vars: Dict[str, Any]):
-        self.env = self._merge_env(env_vars)
-        self.market_params = env_vars.get('market_params', {})
-    
-    def _merge_env(self, env_vars: Dict) -> Dict[str, float]:
-        """合并环境变量与默认值"""
-        merged = {}
-        for key, default in DEFAULT_ENV.items():
-            val = env_vars.get(key, default)
-            try:
-                merged[key] = float(val) if val is not None else default
-            except (ValueError, TypeError):
-                merged[key] = default
-        return merged
+    def __init__(self, market_params: Dict[str, float] = None):
+        self.dte_config = config.get_section('dte')
+        self.strikes_config = config.get_section('strikes')
+        self.rr_config = config.get_section('rr_calculation')
+        self.pw_config = config.get_section('pw_calculation')
+        self.greeks_config = config.get_section('greeks')
+        self.exit_config = config.get_section('exit_rules')
+        self.market_params = market_params or {}
     
     def _safe_get(self, data: Dict, *keys, default=None):
         """安全多层取值"""
@@ -288,7 +241,8 @@ class StrategyCalculator:
         flags.net_vega_exposure = vega
         flags.net_theta_exposure = theta
         
-        # A. 噪音修正
+        # A. 噪音修正 (直接使用配置中的阈值需谨慎，此处简化硬编码，可改为从 config 获取)
+        # 示例：self.config.validation.zero_dte_noise_threshold
         if zero_dte is not None:
             if zero_dte > 0.5:
                 flags.confidence_penalty = 0.3
@@ -336,10 +290,11 @@ class StrategyCalculator:
         call_w = walls.get("call_wall") or spot * 1.05
         put_w = walls.get("put_wall") or spot * 0.95
         
-        e = self.env
-        cons_off = e['STRIKE_CONSERVATIVE_LONG_OFFSET']
-        bal_off = e['STRIKE_BALANCED_WING_OFFSET']
-        agg_off = e['STRIKE_AGGRESSIVE_LONG_OFFSET']
+        # 修复：使用 self.strikes_config
+        cfg = self.strikes_config
+        cons_off = cfg.conservative_long_offset
+        bal_off = cfg.balanced_wing_offset
+        agg_off = cfg.aggressive_long_offset
         
         def r(x): return round(x, 2)
         
@@ -394,7 +349,9 @@ class StrategyCalculator:
         # 基准 + 膨胀
         base, vol_adj = 21.0, 21.0 * t_scale
         
-        # Gap 修正
+        # Gap 修正 (阈值可从 config 获取，此处使用默认值简化)
+        # cfg = self.dte_config
+        # high_thresh = cfg.gap_high_threshold
         gap_mult = 1.2 if gap_em1 > 3 else (0.8 if gap_em1 < 1 else 1.0)
         raw_dte = vol_adj * gap_mult
         
@@ -424,15 +381,17 @@ class StrategyCalculator:
     
     def _calc_rr_credit(self, width: float, ivr: int) -> RiskRewardResult:
         """信用价差 RR"""
-        e = self.env
+        # 修复：使用 self.rr_config.credit_ivr
+        cfg = self.rr_config.credit_ivr
+        
         if ivr <= 25:
-            cr = e['CREDIT_IVR_0_25']
+            cr = cfg['0-25']
         elif ivr <= 50:
-            cr = e['CREDIT_IVR_25_50']
+            cr = cfg['25-50']
         elif ivr <= 75:
-            cr = e['CREDIT_IVR_50_75']
+            cr = cfg['50-75']
         else:
-            cr = e['CREDIT_IVR_75_100']
+            cr = cfg['75-100']
         
         credit = width * cr
         loss = width - credit
@@ -446,13 +405,15 @@ class StrategyCalculator:
     
     def _calc_rr_debit(self, width: float, ivr: int) -> RiskRewardResult:
         """借贷价差 RR"""
-        e = self.env
+        # 修复：使用 self.rr_config.debit_ivr
+        cfg = self.rr_config.debit_ivr
+        
         if ivr <= 40:
-            dr = e['DEBIT_IVR_0_40']
+            dr = cfg['0-40']
         elif ivr <= 70:
-            dr = e['DEBIT_IVR_40_70']
+            dr = cfg['40-70']
         else:
-            dr = e['DEBIT_IVR_70_100']
+            dr = cfg['70-100']
         
         debit = width * dr
         profit = width - debit
@@ -468,17 +429,19 @@ class StrategyCalculator:
     
     def _calc_pw_credit(self, cluster: float, gap_em1: float, tech_score: float) -> WinProbResult:
         """信用价差胜率"""
-        e = self.env
+        # 修复：使用 self.pw_config.credit
+        cfg = self.pw_config.credit
+        
         cluster = cluster or 1.0
         gap_em1 = gap_em1 or 2.0
         
-        base = e['PW_CREDIT_BASE']
-        c_adj = e['PW_CREDIT_CLUSTER_COEF'] * cluster
-        d_pen = e['PW_CREDIT_DISTANCE_PENALTY_COEF'] * gap_em1
+        base = cfg.base
+        c_adj = cfg.cluster_coef * cluster
+        d_pen = cfg.distance_penalty_coef * gap_em1
         t_boost = 0.05 * tech_score if tech_score > 0 else 0
         
         raw = base + c_adj - d_pen + t_boost
-        adj = max(e['PW_CREDIT_MIN'], min(e['PW_CREDIT_MAX'], raw))
+        adj = max(cfg.min, min(cfg.max, raw))
         
         return WinProbResult(
             estimate=round(adj, 3),
@@ -488,21 +451,23 @@ class StrategyCalculator:
     
     def _calc_pw_debit(self, dex_pct: float, vanna_conf: str, gap_em1: float) -> WinProbResult:
         """借贷价差胜率"""
-        e = self.env
+        # 修复：使用 self.pw_config.debit
+        cfg = self.pw_config.debit
+        
         dex_pct = dex_pct or 0.5
         gap_em1 = gap_em1 or 2.0
         
-        vanna_w = {'high': e['PW_DEBIT_VANNA_WEIGHT_HIGH'],
-                   'medium': e['PW_DEBIT_VANNA_WEIGHT_MEDIUM'],
-                   'low': e['PW_DEBIT_VANNA_WEIGHT_LOW']}.get(vanna_conf, e['PW_DEBIT_VANNA_WEIGHT_LOW'])
+        vanna_w = {'high': cfg.vanna_weight_high,
+                   'medium': cfg.vanna_weight_medium,
+                   'low': cfg.vanna_weight_low}.get(vanna_conf, cfg.vanna_weight_low)
         
-        base = e['PW_DEBIT_BASE']
-        d_adj = e['PW_DEBIT_DEX_COEF'] * dex_pct
-        v_adj = vanna_w * e['PW_DEBIT_VANNA_COEF']
+        base = cfg.base
+        d_adj = cfg.dex_coef * dex_pct
+        v_adj = vanna_w * cfg.vanna_coef
         g_pen = -0.05 if gap_em1 > 3 else (-0.03 if gap_em1 > 2 else 0)
         
         raw = base + d_adj + v_adj + g_pen
-        adj = max(e['PW_DEBIT_MIN'], min(e['PW_DEBIT_MAX'], raw))
+        adj = max(cfg.min, min(cfg.max, raw))
         
         return WinProbResult(
             estimate=round(adj, 3),
@@ -515,15 +480,17 @@ class StrategyCalculator:
         if not all([spot, body, em1]) or em1 == 0:
             return WinProbResult(estimate=0.5, formula="数据异常", note="参数不足")
         
-        e = self.env
+        # 修复：使用 self.pw_config.butterfly
+        cfg = self.pw_config.butterfly
+        
         dist = abs(spot - body) / em1
         
         if dist < 0.3:
-            pw_base, desc = e['PW_BUTTERFLY_BODY_INSIDE'], "body内"
+            pw_base, desc = cfg.body_inside, "body内"
         elif dist < 1.0:
             pw_base, desc = 0.55, "轻微偏离"
         else:
-            pw_base, desc = e['PW_BUTTERFLY_BODY_OFFSET_1EM'], "偏离1EM"
+            pw_base, desc = cfg.body_offset_1em, "偏离1EM"
         
         iv_adj = -0.05 if iv_path == "升" else (0.05 if iv_path == "降" else 0)
         adj = max(0.3, min(0.75, pw_base + iv_adj))
@@ -538,22 +505,24 @@ class StrategyCalculator:
     
     def _get_greeks_ranges(self) -> Dict:
         """各策略类型的 Greeks 目标"""
-        e = self.env
+        # 修复：使用 self.greeks_config
+        cfg = self.greeks_config
+        
         return {
             "conservative": {
-                "delta": [e['CONSERVATIVE_DELTA_MIN'], e['CONSERVATIVE_DELTA_MAX']],
-                "theta_min": e['CONSERVATIVE_THETA_MIN'],
-                "vega_max": e['CONSERVATIVE_VEGA_MAX'],
+                "delta": [cfg.conservative.delta_min, cfg.conservative.delta_max],
+                "theta_min": cfg.conservative.theta_min,
+                "vega_max": cfg.conservative.vega_max,
                 "desc": "接近中性Delta，正Theta，负Vega"
             },
             "balanced": {
-                "delta_range": e['BALANCED_DELTA_RANGE'],
-                "theta_min": e['BALANCED_THETA_MIN'],
+                "delta_range": cfg.balanced.delta_range,
+                "theta_min": cfg.balanced.theta_min,
                 "desc": "轻微方向敞口，正Theta，Vega中性"
             },
             "aggressive": {
-                "delta": [e['AGGRESSIVE_DELTA_MIN'], e['AGGRESSIVE_DELTA_MAX']],
-                "vega_min": e['AGGRESSIVE_VEGA_MIN'],
+                "delta": [cfg.aggressive.delta_min, cfg.aggressive.delta_max],
+                "vega_min": cfg.aggressive.vega_min,
                 "desc": "明确方向Delta，可负Theta，正Vega"
             }
         }
@@ -562,19 +531,21 @@ class StrategyCalculator:
     
     def _get_exit_params(self) -> Dict:
         """止盈止损参数"""
-        e = self.env
+        # 修复：使用 self.exit_config
+        cfg = self.exit_config
+        
         return {
             "credit": {
-                "profit_pct": int(e['PROFIT_TARGET_CREDIT_PCT']),
-                "stop_pct": int(e['STOP_LOSS_CREDIT_PCT']),
-                "time_exit_days": int(e['TIME_DECAY_EXIT_DAYS'])
+                "profit_pct": int(cfg.credit.profit_target_pct),
+                "stop_pct": int(cfg.credit.stop_loss_pct),
+                "time_exit_days": int(cfg.credit.time_decay_exit_days)
             },
             "debit": {
-                "profit_pct": int(e['PROFIT_TARGET_DEBIT_PCT']),
-                "stop_pct": int(e['STOP_LOSS_DEBIT_PCT']),
-                "time_exit_days": int(e['TIME_DECAY_EXIT_DAYS'])
+                "profit_pct": int(cfg.debit.profit_target_pct),
+                "stop_pct": int(cfg.debit.stop_loss_pct),
+                "time_exit_days": int(cfg.debit.time_decay_exit_days)
             },
             "time_management": {
-                "exit_days_before_expiry": int(e['TIME_DECAY_EXIT_DAYS'])
+                "exit_days_before_expiry": int(cfg.credit.time_decay_exit_days)
             }
         }

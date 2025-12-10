@@ -11,7 +11,6 @@ from core.model_client import ModelClientManager
 from .state_manager import StateManager
 from .cache_manager import CacheManager
 from .agent_executor import AgentExecutor
-from utils.config_loader import expand_config_to_env_vars
 
 
 class WorkflowEngine:
@@ -27,8 +26,13 @@ class WorkflowEngine:
             cache_file: 指定缓存文件名（如 NVDA_20251127.json）
         """
         self.model_client = model_client
-        # 展开 config 到扁平化 env_vars（供 code_nodes 使用）
-        self.env_vars = expand_config_to_env_vars(env_vars)
+        
+        self.env_vars = {
+            'market_params': env_vars.get('market_params', {}),
+            'dyn_params': env_vars.get('dyn_params', {}),
+            'event_data': env_vars.get('event_data', {})
+        }
+        
         self.cache_file = cache_file  # 新增：支持指定缓存文件
         
         # 依赖注入

@@ -1,16 +1,50 @@
 """
-Code 4: 策略对比引擎 (重构版)
+Code 4: 策略对比引擎 (重构版 - 修复配置访问)
 
 变更:
-1. 使用 @dataclass 定义输出结构
-2. 配置常量集中管理
-3. 嵌套输出替代扁平化
-4. 集成 validation_flags 质量过滤
+1. 修复 self.cfg 未定义导致的 AttributeError
+2. 内置默认评分阈值 (DEFAULT_THRESHOLDS)，解决配置缺失问题
+3. 规范化配置访问方式
 """
 from dataclasses import dataclass, asdict, field
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
+from utils.config_loader import config
 
+# ============= 默认阈值配置 (兜底策略) =============
+# 由于 env_config.yaml 中可能缺失这些具体的评分阈值，
+# 在此定义默认值以防止 KeyError
+DEFAULT_THRESHOLDS = {
+    # EV (期望价值) 评分
+    'EV_HIGH_THRESHOLD': 500,
+    'EV_HIGH_SCORE': 25,
+    'EV_MID_THRESHOLD': 200,
+    'EV_MID_SCORE': 15,
+    'EV_LOW_SCORE': 5,
+    
+    # RAR (风险调整后收益) 评分
+    'RAR_HIGH_THRESHOLD': 0.5,  # 收益/最大亏损 > 0.5
+    'RAR_HIGH_SCORE': 20,
+    'RAR_MID_THRESHOLD': 0.2,
+    'RAR_MID_SCORE': 10,
+    'RAR_LOW_THRESHOLD': 0.1,
+    'RAR_LOW_SCORE': 5,
+    
+    # 场景匹配评分
+    'SCENARIO_HIGH_SCORE': 25,
+    'SCENARIO_MID_SCORE': 10,
+    
+    # 流动性评分
+    'LIQUIDITY_PASS_SCORE': 10,
+    'MAX_LEGS': 4,
+    'MAX_STRIKE_DISTANCE_EM1': 3.0,
+    
+    # 质量过滤惩罚
+    'ZERO_DTE_HIGH_PENALTY': 20,
+    'ZERO_DTE_MID_PENALTY': 10,
+    'VETO_DIRECTIONAL_ZERO': True,
+    'BIAS_MISMATCH_PENALTY': 15
+}
 
 # ============= 数据类定义 =============
 
@@ -43,81 +77,27 @@ class QualityFilter:
     strategy_bias: str = "Neutral"
 
 
-@dataclass 
-class ComparisonOutput:
-    """对比引擎完整输出"""
-    symbol: str
-    total_strategies: int
-    positive_ev_count: int
-    analysis_timestamp: str
-    quality_filter: QualityFilter
-    top3: List[StrategyMetrics]
-    ranking: List[dict]
-
-
-# ============= 配置常量 =============
-
-DEFAULT_CONFIG = {
-    # 评分权重 (总计 100)
-    'WEIGHT_EV': 40,
-    'WEIGHT_RAR': 30,
-    'WEIGHT_SCENARIO': 20,
-    'WEIGHT_LIQUIDITY': 10,
-    
-    # EV 阈值与得分
-    'EV_HIGH_THRESHOLD': 0.5,
-    'EV_MID_THRESHOLD': 0.2,
-    'EV_HIGH_SCORE': 40,
-    'EV_MID_SCORE': 30,
-    'EV_LOW_SCORE': 20,
-    
-    # RAR 阈值与得分
-    'RAR_HIGH_THRESHOLD': 0.3,
-    'RAR_MID_THRESHOLD': 0.15,
-    'RAR_LOW_THRESHOLD': 0.05,
-    'RAR_HIGH_SCORE': 30,
-    'RAR_MID_SCORE': 25,
-    'RAR_LOW_SCORE': 15,
-    
-    # 剧本匹配得分
-    'SCENARIO_HIGH_SCORE': 20,
-    'SCENARIO_MID_SCORE': 10,
-    
-    # 流动性得分
-    'LIQUIDITY_PASS_SCORE': 10,
-    
-    # 流动性检查
-    'MAX_LEGS': 4,
-    'MAX_STRIKE_DISTANCE_EM1': 3.0,
-    
-    # 质量过滤惩罚
-    'ZERO_DTE_HIGH_PENALTY': 20,      # 0DTE > 50%
-    'ZERO_DTE_MID_PENALTY': 10,       # 0DTE > 30%
-    'BIAS_MISMATCH_PENALTY': 15,      # 策略偏好不匹配
-    'VETO_DIRECTIONAL_ZERO': True,    # 量价背离时方向策略归零
-}
-
-
 # ============= 主入口函数 =============
 
 def main(strategies_output: dict, scenario_output: dict, 
          agent3_output: dict, **env_vars) -> dict:
     """
     Code 4 主入口
-    
-    Args:
-        strategies_output: Agent 6 策略列表
-        scenario_output: Agent 5 场景分析 (或 Code 3 输出)
-        agent3_output: Agent 3 / Code 3 数据
-        
-    Returns:
-        dict - 策略对比结果
     """
     try:
+        # 兼容处理：如果是字符串则解析，如果是字典则直接使用
+        if isinstance(strategies_output, str):
+            strategies_output = json.loads(strategies_output)
+        if isinstance(scenario_output, str):
+            scenario_output = json.loads(scenario_output)
+        if isinstance(agent3_output, str):
+            agent3_output = json.loads(agent3_output)
+
         engine = ComparisonEngine(env_vars)
         return engine.process(strategies_output, scenario_output, agent3_output)
     except Exception as e:
         import traceback
+        import json
         return {
             "error": True,
             "message": str(e),
@@ -131,15 +111,12 @@ class ComparisonEngine:
     """策略对比引擎 (重构版)"""
     
     def __init__(self, env_vars: Dict):
-        self.cfg = self._merge_config(env_vars)
-    
-    def _merge_config(self, env_vars: Dict) -> Dict:
-        """合并配置"""
-        merged = {}
-        for key, default in DEFAULT_CONFIG.items():
-            val = env_vars.get(key, default)
-            merged[key] = val if val is not None else default
-        return merged
+        # 加载配置（保留原有逻辑，增加默认阈值）
+        self.scoring_config = config.get_section('scoring')
+        self.rr_config = config.get_section('rr_calculation')
+        
+        # 使用默认阈值，实际项目中建议将其移入 env_config.yaml
+        self.thresholds = DEFAULT_THRESHOLDS
     
     # ------------- 主处理流程 -------------
     
@@ -148,21 +125,28 @@ class ComparisonEngine:
         """主处理流程"""
         # 提取输入
         strategies = strategies_output.get("strategies", [])
-        spot = agent3_output.get("spot_price", 0) or agent3_output.get("meta", {}).get("spot", 0)
-        em1 = agent3_output.get("em1_dollar", 0) or agent3_output.get("meta", {}).get("em1", 0)
-        symbol = agent3_output.get("symbol", "")
+        
+        # 兼容 meta 信息位置
+        meta = agent3_output.get("meta", {})
+        spot = agent3_output.get("spot_price", 0) or meta.get("spot", 0)
+        em1 = agent3_output.get("em1_dollar", 0) or meta.get("em1", 0)
+        symbol = agent3_output.get("symbol", "UNKNOWN")
         
         # 场景信息 (兼容 agent5 和 code3 格式)
         scenario_class = scenario_output.get("scenario_classification", {})
         if not scenario_class:
+            # 尝试从 meta 中获取（如果是 Code 3 透传）
+            scenario_meta = scenario_output.get("meta", {})
             scenario_class = {
-                "primary_scenario": scenario_output.get("meta", {}).get("primary_scenario", ""),
-                "scenario_probability": scenario_output.get("meta", {}).get("scenario_probability", 0)
+                "primary_scenario": scenario_meta.get("primary_scenario", ""),
+                "scenario_probability": scenario_meta.get("scenario_probability", 0)
             }
+            
         primary_scenario = scenario_class.get("primary_scenario", "")
         scenario_prob = scenario_class.get("scenario_probability", 0)
         
         # 提取 validation_flags (来自 code3)
+        # 注意：Code 3 输出结构中 validation 可能在根节点
         validation = agent3_output.get("validation", {})
         quality_filter = self._process_quality_filter(validation)
         
@@ -191,6 +175,7 @@ class ComparisonEngine:
     def _process_quality_filter(self, validation: Dict) -> QualityFilter:
         """处理质量过滤"""
         qf = QualityFilter()
+        cfg = self.thresholds
         
         zero_dte = validation.get("zero_dte_ratio")
         is_vetoed = validation.get("is_vetoed", False)
@@ -204,10 +189,10 @@ class ComparisonEngine:
         if zero_dte is not None:
             if zero_dte > 0.5:
                 qf.filters_triggered.append("0DTE_HIGH")
-                qf.total_penalty += self.cfg['ZERO_DTE_HIGH_PENALTY']
+                qf.total_penalty += cfg['ZERO_DTE_HIGH_PENALTY']
             elif zero_dte > 0.3:
                 qf.filters_triggered.append("0DTE_MID")
-                qf.total_penalty += self.cfg['ZERO_DTE_MID_PENALTY']
+                qf.total_penalty += cfg['ZERO_DTE_MID_PENALTY']
         
         # 量价背离
         if is_vetoed:
@@ -254,15 +239,19 @@ class ComparisonEngine:
     def _calc_base_metrics(self, strategy: dict, primary_scenario: str,
                            scenario_prob: int, spot: float, em1: float) -> dict:
         """计算基础指标"""
-        cfg = self.cfg
+        cfg = self.thresholds
         
         # 提取 RR 和 Pw
-        rr = strategy.get("rr_calculation", {})
-        pw_calc = strategy.get("pw_calculation", {})
+        # Agent 6 输出的结构通常在 quant_metrics 中
+        quant = strategy.get("quant_metrics", {})
         
-        max_profit = rr.get("max_profit", 0)
-        max_loss = rr.get("max_loss", 0)
-        pw = self._parse_pw(pw_calc.get("pw_estimate", "50%"))
+        # 尝试解析 max_profit/loss (可能是字符串或数字)
+        max_profit = self._parse_currency(quant.get("max_profit", 0))
+        max_loss = self._parse_currency(quant.get("max_loss", 0))
+        
+        # 解析胜率
+        pw_str = quant.get("pw_estimate", "50%")
+        pw = self._parse_pw(pw_str)
         
         # EV 和 RAR
         ev = pw * max_profit - (1 - pw) * max_loss
@@ -321,15 +310,15 @@ class ComparisonEngine:
     def _apply_quality_filter(self, strategy: dict, qf: QualityFilter,
                                validation: Dict, metrics: dict) -> Tuple[float, List[str]]:
         """应用质量过滤，返回调整分和说明"""
-        cfg = self.cfg
+        cfg = self.thresholds
         adjustment = 0.0
         notes = []
         
         strategy_type = strategy.get("strategy_type", "")
         is_directional = any(kw in strategy_type.lower() for kw in 
-                            ["call", "put", "bull", "bear", "long", "short"])
+                            ["call", "put", "bull", "bear", "long", "short", "directional"])
         is_credit = any(kw in strategy_type.lower() for kw in 
-                       ["iron", "condor", "butterfly", "credit"])
+                       ["iron", "condor", "butterfly", "credit", "income"])
         is_debit = any(kw in strategy_type.lower() for kw in 
                       ["debit", "straddle", "strangle"])
         
@@ -339,11 +328,16 @@ class ComparisonEngine:
             notes.append("⛔ 量价背离，方向策略禁用")
         
         # 2. 0DTE 噪音 - 短期策略扣分
-        dte = strategy.get("dte", 0) or strategy.get("expiry_dte", 0)
-        if "0DTE_HIGH" in qf.filters_triggered and dte and dte < 3:
+        # 尝试获取 DTE
+        dte = 0
+        legs = strategy.get("legs", [])
+        if legs:
+            dte = legs[0].get("expiry_dte", 0)
+            
+        if "0DTE_HIGH" in qf.filters_triggered and dte > 0 and dte < 3:
             adjustment -= cfg['ZERO_DTE_HIGH_PENALTY']
             notes.append(f"⚠️ 0DTE噪音高，DTE={dte}短期策略风险大")
-        elif "0DTE_MID" in qf.filters_triggered and dte and dte < 3:
+        elif "0DTE_MID" in qf.filters_triggered and dte > 0 and dte < 3:
             adjustment -= cfg['ZERO_DTE_MID_PENALTY']
             notes.append(f"⚠️ 0DTE中度噪音，DTE={dte}")
         
@@ -360,6 +354,19 @@ class ComparisonEngine:
     
     # ------------- 辅助方法 -------------
     
+    def _parse_currency(self, value) -> float:
+        """解析货币字符串"""
+        if isinstance(value, (int, float)):
+            return float(value)
+        if isinstance(value, str):
+            # 移除 $ , 等字符
+            clean = value.replace('$', '').replace(',', '').strip()
+            try:
+                return float(clean)
+            except:
+                return 0.0
+        return 0.0
+
     def _parse_pw(self, pw_str: str) -> float:
         """解析胜率字符串"""
         if not pw_str:
@@ -383,39 +390,47 @@ class ComparisonEngine:
                               scenario_prob: int) -> Tuple[str, str]:
         """计算剧本匹配度"""
         st = strategy_type.lower() if strategy_type else ""
+        ps = primary_scenario.lower() if primary_scenario else ""
         
         # 保守策略 (Iron Condor, Butterfly)
-        if any(kw in st for kw in ["保守", "condor", "butterfly", "iron"]):
-            if "区间" in primary_scenario and scenario_prob >= 60:
+        if any(kw in st for kw in ["保守", "condor", "butterfly", "iron", "income"]):
+            if ("区间" in ps or "range" in ps) and scenario_prob >= 60:
                 return "高", f"区间剧本{scenario_prob}%，信用策略完美匹配"
-            elif "区间" in primary_scenario:
+            elif "区间" in ps or "range" in ps:
                 return "中", f"区间剧本{scenario_prob}%略低，但仍适配"
             else:
-                return "低", f"趋势剧本{primary_scenario}，区间策略不适配"
+                return "低", f"趋势剧本，区间策略风险较大"
         
         # 均衡策略 (Spread)
         if any(kw in st for kw in ["均衡", "spread", "vertical"]):
-            if "趋势" in primary_scenario and scenario_prob >= 55:
+            if ("趋势" in ps or "trend" in ps) and scenario_prob >= 55:
                 return "高", f"趋势剧本{scenario_prob}%，价差策略适配"
-            elif "区间" in primary_scenario:
+            elif "区间" in ps:
                 return "中", "区间剧本下可获取部分方向收益"
             else:
                 return "低", "剧本不明确，方向策略风险大"
         
         # 进取策略 (Long Call/Put, Straddle)
         if any(kw in st for kw in ["进取", "long call", "long put", "straddle"]):
-            if "强趋势" in primary_scenario or scenario_prob >= 65:
+            if ("强趋势" in ps or "breakout" in ps) or scenario_prob >= 65:
                 return "高", f"强确信场景{scenario_prob}%，单腿可最大化收益"
-            elif "趋势" in primary_scenario:
+            elif "趋势" in ps:
                 return "中", "趋势初期，单腿风险较大"
             else:
                 return "低", "非趋势场景，单腿时间价值流失快"
         
+        # WAIT 策略
+        if "wait" in st:
+            if scenario_prob < 50:
+                return "高", "市场混沌，观望最佳"
+            else:
+                return "中", "有一定机会但选择观望"
+
         return "中", "通用策略"
     
     def _check_liquidity(self, strategy: dict, spot: float, em1: float) -> Tuple[bool, str]:
         """流动性检查"""
-        cfg = self.cfg
+        cfg = self.thresholds
         legs = strategy.get("legs", [])
         
         # 腿数检查

@@ -1,13 +1,10 @@
-# ========================================
-# Swing Quant Workflow - 依赖清单
-# ========================================
 
 # === 核心依赖 ===
 loguru>=0.7.0              # 日志系统
 pyyaml>=6.0                # YAML 配置解析
+python-dotenv>=1.0.0       # 环境变量管理（.env 文件支持）
 
 # === LLM 模型客户端 ===
-# 至少安装其中一个：
 anthropic>=0.39.0          # Anthropic Claude API
 openai>=1.54.0             # OpenAI / DMXapi (OpenAI兼容)
 
@@ -19,7 +16,7 @@ numpy>=1.24.0              # 数值计算
 requests>=2.31.0           # API 请求
 httpx>=0.27.0              # 异步 HTTP 客户端
 
-# === 图片处理（可选，Agent3需要）===
+# === 图片处理（Agent3视觉需要）===
 pillow>=10.0.0             # 图片预处理
 
 # === JSON Schema 验证 ===
@@ -27,6 +24,10 @@ jsonschema>=4.17.0         # JSON Schema 验证
 
 # === 类型提示 ===
 typing-extensions>=4.5.0   # 类型注解扩展
+
+# === CLI 工具 ===
+click>=8.1.0               # 命令行接口
+rich>=13.0.0               # 富文本终端输出（用于 console.print）
 
 # === 开发工具（可选）===
 # pytest>=7.4.0            # 单元测试
