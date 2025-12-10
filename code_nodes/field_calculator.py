@@ -702,10 +702,20 @@ def main(aggregated_data: dict, symbol: str, **env_vars) -> dict:
     try:
         print("🔍 [Calculator] 开始验证原始字段完整性")
         # 提取数据
-        result_str = aggregated_data.get('result')
-        if isinstance(result_str, str):
-            data = json.loads(result_str)
+        payload = aggregated_data.get('result')
+        
+        if isinstance(payload, str):
+            # 情况 1: Aggregator 返回的 JSON 字符串 (Full Mode)
+            try:
+                data = json.loads(payload)
+            except json.JSONDecodeError:
+                # 兜底：如果解析失败，假设输入本身就是数据
+                data = aggregated_data
+        elif isinstance(payload, dict):
+            # 情况 2: Refresh Mode 直接传入的字典 (修复点)
+            data = payload
         else:
+            # 情况 3: 兜底 (输入不含 result 包装)
             data = aggregated_data
         
         # 提取市场参数

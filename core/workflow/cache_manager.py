@@ -1,9 +1,12 @@
 """
-缓存管理器（重构版）
+缓存管理器（修复版）
 职责：
 1. 管理完整分析结果缓存
 2. 管理希腊值快照（支持多次 refresh）
 3. 快照对比功能
+
+修复：
+- initialize_cache_with_params: 移除错误的 snapshots_1 预初始化
 """
 
 import json
@@ -15,7 +18,7 @@ import re
 
 
 class CacheManager:
-    """缓存管理器（重构版）"""
+    """缓存管理器"""
     
     def __init__(self):
         """初始化缓存管理器"""
@@ -115,18 +118,6 @@ class CacheManager:
     ):
         """
         保存完整分析结果到 source_target
-        
-        Args:
-            symbol: 股票代码
-            initial_data: 初始数据（计算后的完整数据）
-            scenario: 场景分析
-            strategies: 策略列表
-            ranking: 策略排序
-            report: 最终报告
-            start_date: 分析开始日期（YYYYMMDD）
-            cache_file: 指定缓存文件名（如 NVDA_20251127.json）
-            market_params: 市场参数 
-            dyn_params: 动态参数 
         """
         # 验证 symbol
         if not symbol or symbol.upper() == "UNKNOWN":
@@ -245,8 +236,6 @@ class CacheManager:
     # 希腊值快照管理（refresh 快照）
     # ============================================
     
-    
-    # 修复 save_greeks_snapshot 方法,中找到 save_greeks_snapshot 方法
     def save_greeks_snapshot(
         self,
         symbol: str,
@@ -300,7 +289,7 @@ class CacheManager:
                 "source_target": None
             }
         
-        # ✅ 修复：计算 snapshot_id
+        # 计算 snapshot_id
         if is_initial:
             snapshot_id = 0  # source_target 的 ID 为 0
         else:
@@ -308,9 +297,9 @@ class CacheManager:
             snapshot_count = sum(1 for key in snapshots_data.keys() if key.startswith("snapshots_"))
             snapshot_id = snapshot_count + 1
         
-        # ✅ 修复：创建快照记录（添加 snapshot_id）
+        # 创建快照记录（添加 snapshot_id）
         snapshot_record = {
-            "snapshot_id": snapshot_id,  # ✅ 新增字段
+            "snapshot_id": snapshot_id,
             "timestamp": datetime.now().isoformat(),
             "note": note,
             "targets": targets
@@ -335,7 +324,7 @@ class CacheManager:
         return {
             "status": "success",
             "snapshot_file": str(snapshot_file),
-            "snapshot": snapshot_record,  # ✅ 返回包含 snapshot_id 的记录
+            "snapshot": snapshot_record,
             "total_snapshots": sum(1 for k in snapshots_data.keys() if k.startswith("snapshots_"))
         }
     
@@ -349,7 +338,7 @@ class CacheManager:
         Returns:
             最新快照数据，如果不存在返回 None
         """
-        snapshot_file = self._get_snapshot_filename(symbol)
+        snapshot_file = self._get_output_filename(symbol)
         
         if not snapshot_file.exists():
             logger.warning(f"未找到快照文件: {snapshot_file}")
@@ -379,7 +368,7 @@ class CacheManager:
         Returns:
             完整的快照文件内容
         """
-        snapshot_file = self._get_snapshot_filename(symbol)
+        snapshot_file = self._get_output_filename(symbol)
         
         if not snapshot_file.exists():
             return None
@@ -769,7 +758,8 @@ class CacheManager:
             
             # ✅ 空占位符（等待后续填充）
             "source_target": {},
-            "snapshots_1": {},
+            # 🛠️ 修复：移除 snapshots_1 预占位，由 save_greeks_snapshot 动态生成
+            # "snapshots_1": {},
             
             "last_updated": datetime.now().isoformat()
         }
