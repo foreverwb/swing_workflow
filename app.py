@@ -20,6 +20,10 @@ from datetime import datetime
 import click
 from rich.console import Console
 from loguru import logger
+from core.model_client import ModelClientFactory
+from commands import AnalyzeCommand, RefreshCommand
+from utils.config_loader import config
+from utils.va_client import VAClient, VAClientError
 
 # ⭐ 关键修复：确保在任意目录运行时都能正确找到项目资源
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -27,12 +31,6 @@ DEFAULT_MODEL_CONFIG = str(PROJECT_ROOT / "config" / "model_config.yaml")
 
 # 切换工作目录到项目根目录
 os.chdir(PROJECT_ROOT)
-
-from core.model_client import ModelClientFactory
-from commands import AnalyzeCommand, RefreshCommand
-from utils.config_loader import config
-
-
 console = Console()
 
 
@@ -96,6 +94,21 @@ def validate_market_params(params: dict) -> dict:
         
         if 'earning_date' in params and params['earning_date']:
             datetime.strptime(params['earning_date'], "%Y-%m-%d")
+            
+        if 'iv_path' in params and params['iv_path']:
+            valid_iv_paths = ['Rising', 'Falling', 'Flat', 'Insufficient_Data']
+            iv_path = str(params['iv_path']).strip()
+            
+            if iv_path not in valid_iv_paths:
+                raise ValueError(
+                    f"iv_path 必须是以下值之一: {', '.join(valid_iv_paths)}, "
+                    f"当前值: {iv_path}"
+                )
+            
+            params['iv_path'] = iv_path  # 确保是字符串类型
+        else:
+            # 如果未提供 iv_path，设置默认值
+            params['iv_path'] = 'Insufficient_Data'
             
     except ValueError as e:
         raise click.ClickException(f"参数验证失败: {e}")
@@ -427,7 +440,6 @@ def quick(symbol: str, vix: float, target_date: str, folder: str, cache: str, ou
       quick NVDA -v 18.5 -f ./data -c NVDA.json      # 完整分析
       quick NVDA -v 18.5 -t 2025-12-06               # 指定历史日期
     """
-    from utils.va_client import VAClient, VAClientError
     
     setup_logging()
     symbol = symbol.upper()
@@ -439,12 +451,12 @@ def quick(symbol: str, vix: float, target_date: str, folder: str, cache: str, ou
     
     try:
         api_params = client.get_params(symbol, vix=vix, date=target_date)
-        
         params = {
-            'vix': vix,
+            'vix': vix if vix is not None else api_params.get('vix'),
             'ivr': api_params['ivr'],
             'iv30': api_params['iv30'],
             'hv20': api_params['hv20'],
+            'iv_path': api_params.get('iv_path', 'N/A')
         }
         
         if api_params.get('earning_date'):

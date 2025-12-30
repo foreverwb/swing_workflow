@@ -2,12 +2,12 @@
 输入文件计算器 - 处理 -i 参数的 symbol_datetime.json 文件
 计算 cluster_strength_ratio 并写回文件
 
-合并优化版本：
+合并优化版本 (v2.1):
 - 支持多种数据结构格式
 - 使用 top1/ENP 方法计算集中度
 - 双权重口径对比 (gex_total_m vs share_pct)
-- 增强的日志输出和错误处理
-- 新增 dataclass 结构化输出 (PanelMetrics, ClusterAssessment)
+- [新增] 激活 ECR/SER/TSR 微观结构计算
+- [新增] 增加物理含义转译层 (Rigid/Brittle Wall)
 """
 from __future__ import annotations
 import json
@@ -664,6 +664,52 @@ def compute_ECR_SER_TSR(run: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def interpret_micro_structure(metrics: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    [新增] 微观结构物理含义转译层
+    将 ECR/SER/TSR 数值转化为 LLM 可理解的物理状态
+    """
+    ecr = metrics.get("ECR") or 0
+    ser = metrics.get("SER") or 0
+    tsr = metrics.get("TSR") or 0
+    
+    # 1. 墙体物理属性 (Wall Physics) - 基于 ECR (集中度)
+    # ECR 越高，筹码越集中在单一期限，墙越硬(Rigid)，容易 Pinning
+    if ecr > 0.65:
+        wall_type = "Rigid (刚性墙)"
+        breakout_difficulty = "High"
+        wall_note = "筹码高度集中，突破需巨大动能，容易引发Gamma Pinning"
+    elif ecr < 0.35:
+        wall_type = "Brittle (脆性墙)"
+        breakout_difficulty = "Low"
+        wall_note = "筹码分散，墙体薄弱，容易被穿透"
+    else:
+        wall_type = "Elastic (弹性墙)"
+        breakout_difficulty = "Medium"
+        wall_note = "结构均衡，提供正常阻力"
+
+    # 2. 续航/接力能力 (Sustain Potential) - 基于 SER (次强结构)
+    # SER 越高，说明次强期限有接力能力，趋势容易延续
+    if ser > 0.55:
+        sustain_potential = "High"
+        sustain_note = "次级期限结构完整，突破后有接力(Relay)，趋势延续性强"
+    else:
+        sustain_potential = "Low"
+        sustain_note = "次级结构空虚，警惕假突破(False Breakout)或缺乏后续动能"
+
+    return {
+        "wall_type": wall_type,
+        "breakout_difficulty": breakout_difficulty,
+        "sustain_potential": sustain_potential,
+        "interpretation": f"{wall_type}，突破难度{breakout_difficulty}。{sustain_note}。",
+        "raw_metrics": {
+            "ECR": round(ecr, 3),
+            "SER": round(ser, 3),
+            "TSR": round(tsr, 3)
+        }
+    }
+
+
 # ============================================================
 # InputFileCalculator 类
 # ============================================================
@@ -729,6 +775,10 @@ class InputFileCalculator:
         # 同时执行新的 dataclass 格式评估
         self._cluster_assessment = compute_cluster_strength_assessment_v2(self.data)
         
+        # [新增] 计算微观结构指标 (ECR/SER/TSR) 并转译
+        raw_micro = compute_ECR_SER_TSR(self.data)
+        micro_structure = interpret_micro_structure(raw_micro)
+
         # 提取关键结果
         summary = self._assessment["summary"]
         top_summary = self._assessment["top_summary"]
@@ -738,6 +788,7 @@ class InputFileCalculator:
             "tier": self._assessment["tier"],
             "avg_top1": summary["avg_top1_main"],
             "avg_enp": summary["avg_enp_main"],
+            "micro_structure": micro_structure,  # [新增]
             # 各panel详情
             "short": {
                 "top1": top_summary["short"]["top1"],
@@ -815,6 +866,13 @@ class InputFileCalculator:
         
         self.data["spec"]["targets"]["gamma_metrics"]["cluster_strength_ratio"] = ratio
         
+        # [新增] 写入微观结构分析
+        if self._assessment:
+             # 重新获取(确保已有)
+             raw_micro = compute_ECR_SER_TSR(self.data)
+             micro_data = interpret_micro_structure(raw_micro)
+             self.data["spec"]["targets"]["gamma_metrics"]["micro_structure"] = micro_data
+
         # 如果有 ClusterAssessment 结果，也写入
         if self._cluster_assessment:
             self.data["spec"]["targets"]["gamma_metrics"]["cluster_assessment"] = {
@@ -872,6 +930,7 @@ def calculate_and_update(input_file: Path) -> Dict[str, Any]:
                 "mid": result["mid"],
                 "long": result["long"],
             },
+            "micro_structure": result.get("micro_structure"), # [新增]
             "file_path": str(input_file)
         }
     

@@ -1,160 +1,151 @@
 """
-Agent 8: 最终报告 Prompt
-生成人类可读的综合分析报告
+Agent 8: 最终报告 Prompt (v3.5 - Verdict & Monitor)
+变更:
+1. [新增] 交易决策面板 (Verdict) - 位于报告最顶端
+2. [新增] 动态监控看板 (Live Monitoring)
+3. [增强] 策略描述逻辑，确保正确转述 Agent 6 的意图
 """
 
 def get_system_prompt() -> str:
     """系统提示词"""
-    return """你是一位专业的期权分析报告撰写专家。
+    return """你是一位精通微观结构物理学与实战风控的期权交易总监。
 
 **核心任务**:
-将技术分析数据转化为清晰易懂的投资报告，供交易者决策参考。
+生成一份**"实战导向"**的交易指令书。报告必须逻辑严密，数据详实。
 
-**报告结构**:
+**报告结构规范**:
 
-# 📊 [{SYMBOL}] 期权策略分析报告
-*生成时间: {TIMESTAMP}*
+# ${SYMBOL} 结构化交易分析报告
+
+## 🚦 交易决策面板 (Tactical Verdict)
+> *这是交易的最终闸门 (Gatekeeper)，必须置于报告最顶端。*
+- **决策指令**: [强力入场 (Aggressive) / 轻仓试探 (Probe) / 等待确认 (Wait for Setup) / 观望 (Abstain)]
+- **决策逻辑**:
+  1. **数据熔断**: 检查 Price 是否为 0 或关键数据 N/A。若有，指令必须为 **"观望 (Abstain) - 数据异常"**。
+  2. **物理属性**: **Rigid Wall** -> 倾向 "轻仓/等待"; **Brittle Wall** -> 倾向 "强力入场"。
+  3. **量化评分**: 若 Top 1 得分 < 40 -> "观望"。
+- **仓位建议**: (例如: "建议 1/2 仓位起步...")
+
+## 📡 动态监控看板 (Live Monitoring)
+> *指导持仓期间的导航。*
+- **结构漂移**: 警惕 Wall ($XXX) 下移? Zero Gamma ($XXX) 上行?
+- **微观失效**: 若墙体由 Brittle 转 Rigid (ECR升高)，提示止盈。
+- **波动率**: 监控 IV [Rising/Falling] 是否符合预期。
 
 ## 🎯 执行摘要
-- 市场环境判断(2-3句话)
-- 核心策略推荐(Top 1)
-- 关键风险提示
+...
 
-## 📈 市场现状
-- 当前价格及变化
-- 技术面评分及关键位
-- Gamma Regime状态
-- IV环境(百分位、路径)
-- 近期事件风险
+## 🔬 微观结构与定价
+> *利用 ECR/SER 进行物理推演*
+- **墙体物理**: [Rigid/Brittle] (ECR: X.XX) -> 推演 "能不能穿?"
+- **接力能力**: [High/Low] (SER: X.XX) -> 推演 "穿了能不能跑?"
+- **结构映射**: 映射到 Nearby Peak ($XXX) 和 Secondary Peak ($XXX)。
 
 ## 🔮 场景推演
-列出3-5个场景:
-- **场景名称** (概率X%)
-  - 价格预期: XXX → XXX
-  - IV变化: 扩张/收缩
-  - 触发条件: ...
-  - Greeks影响: ...
+...
 
-## 💡 策略推荐
-### Top 1: [策略名称] ⭐⭐⭐⭐⭐
-- **策略类型**: XXX
-- **建仓成本**: $XXX (X%账户)
-- **最大盈利**: $XXX (+XX%)
-- **最大亏损**: $XXX (-XX%)
-- **盈亏平衡**: $XXX
-- **Greeks**: Delta=X, Gamma=X, Vega=X, Theta=X
-- **推荐理由**: ...
-- **入场条件**: ...
-- **风险管理**: ...
+## 💡 策略推荐 (Strategy Deck)
+> *基于 Agent 6 生成的详细战术*
+> **注意**: 在描述策略时，请简要解释为什么该策略（如 Bull Put）匹配当前场景（如 Grind Up）。
 
-### Top 2: [策略名称] ⭐⭐⭐⭐
-(同上结构)
+### ⭐ Top 1: [策略名]
+- **蓝图来源**: [source_blueprint]
+...
 
-### Top 3: [策略名称] ⭐⭐⭐
-(同上结构)
+## ⚖️ 策略量化对比
+...
 
-## ⚖️ 策略对比
-| 策略 | 评分 | 风险 | 收益 | 适用场景 | 难度 |
-|------|------|------|------|----------|------|
-| XXX  | XX   | XX   | XX   | XXX      | XX   |
-
-## ⚠️ 风险提示
-1. **事件风险**: ...
-2. **市场风险**: ...
-3. **策略风险**: ...
-4. **执行风险**: ...
-
-## 📋 行动清单
-- [ ] 监控价格到达 $XXX
-- [ ] 关注IV变化(当前XX%)
-- [ ] 准备保证金 $XXX
-- [ ] 设置止损在 $XXX
-- [ ] 关注财报日期: XXXX-XX-XX
-
-## 💭 补充说明
-(其他重要提示)
-
----
-*免责声明: 本报告仅供参考，不构成投资建议。期权交易存在风险，请谨慎决策。*
-
-**文风要求**:
-- 专业但不晦涩，用通俗语言解释技术术语
-- 重点突出，数据精准
-- 结构清晰，便于快速阅读
-- 避免过度自信的表述，保持客观中立
-- 使用Emoji增强可读性，但不过度使用
-
-返回Markdown格式的报告文本。"""
+## ⚠️ 风险雷达
+...
+"""
 
 
-def get_user_prompt(agent3: dict, agent5: dict, agent7: dict, event: dict) -> str:
+def get_user_prompt(agent3: dict, agent5: dict, agent6: dict, code4: dict, event: dict) -> str:
     """用户提示词"""
     import json
     
-    # 辅助函数：清理 markdown 并解析 JSON
     def _clean_and_parse(data):
         if isinstance(data, str):
-            clean_text = data.strip()
-            if clean_text.startswith("```json"):
-                clean_text = clean_text[7:]
-            elif clean_text.startswith("```"):
-                clean_text = clean_text[3:]
-            if clean_text.endswith("```"):
-                clean_text = clean_text[:-3]
-            try:
-                return json.loads(clean_text.strip())
-            except json.JSONDecodeError:
-                return {}
-        return data if isinstance(data, dict) else {}
+            try: return json.loads(data)
+            except: return {}
+        if not isinstance(data, dict): return {}
+        # 自动解包 raw 字段
+        if "raw" in data and len(data.keys()) <= 2:
+            raw_content = data["raw"]
+            if isinstance(raw_content, str):
+                try:
+                    clean = raw_content.strip()
+                    if clean.startswith("```json"): clean = clean[7:]
+                    elif clean.startswith("```"): clean = clean[3:]
+                    if clean.endswith("```"): clean = clean[:-3]
+                    return json.loads(clean.strip())
+                except: pass
+        return data
     
-    # 防御性检查：确保输入是字典
-    agent3 = _clean_and_parse(agent3)
-    agent5 = _clean_and_parse(agent5)
-    agent7 = _clean_and_parse(agent7)
-    event = _clean_and_parse(event)
+    a3 = _clean_and_parse(agent3)
+    a5 = _clean_and_parse(agent5)
+    a6 = _clean_and_parse(agent6)
+    c4 = _clean_and_parse(code4)
+    evt = _clean_and_parse(event)
     
-    symbol = agent3.get("symbol", "UNKNOWN")
-    current_price = agent3.get("market_data", {}).get("current_price", 0)
-    ta_score = agent3.get("technical_analysis", {}).get("ta_score", 0)
+    symbol = a3.get("symbol", "UNKNOWN")
     
-    event_json = event.get("result", "{}")
+    # 优先从 targets 获取价格
+    current_price = a3.get("targets", {}).get("spot_price")
+    if not current_price:
+        current_price = a3.get("market_data", {}).get("current_price", 0)
     
-    return f"""请生成最终分析报告:
+    # 提取核心情报
+    targets = a3.get("targets", {})
+    gamma_metrics = targets.get("gamma_metrics", {})
+    micro = gamma_metrics.get("micro_structure", {})
+    peaks = gamma_metrics.get("structural_peaks", {})
+    walls = targets.get("walls", {})
+    anchors = targets.get("sentiment_anchors", {})
+    vol_surf = targets.get("vol_surface", {})
+    
+    # 构造微观上下文
+    micro_context = {
+        "physics": micro,
+        "locations": {
+            "nearby_peak": peaks.get("nearby_peak"),
+            "secondary_peak": peaks.get("secondary_peak"),
+            "call_wall": walls.get("call_wall"),
+            "put_wall": walls.get("put_wall")
+        }
+    }
+    
+    return f"""请生成实战交易指令书。
 
-## 股票信息
-- 代码: {symbol}
-- 当前价格: ${current_price}
-- 技术评分: {ta_score}
+## 标的信息
+- Symbol: {symbol}
+- Price: ${current_price}
 
-## 数据解析结果
+## 核心情报 (Phase 3 Physics)
+- **微观全景**: {json.dumps(micro_context, ensure_ascii=False)}
+- **情绪锚点**: {json.dumps(anchors, ensure_ascii=False)}
+- **波动率曲面**: {json.dumps(vol_surf, ensure_ascii=False)}
+
+## 场景推演 (Agent 5)
 ```json
-{agent3}
-```
+{json.dumps(a5, ensure_ascii=False, indent=2)}
 
-## 场景分析
-```json
-{agent5}
-```
+## 策略详情 (Agent 6)
+{json.dumps(a6, ensure_ascii=False, indent=2)}
 
-## 策略排序
-```json
-{agent7}
-```
+## 策略评分对比 (Code 4)
+{json.dumps(c4, ensure_ascii=False, indent=2)}
 
 ## 事件风险
-```json
-{event_json}
-```
+{json.dumps(evt, ensure_ascii=False)}
 
-## 生成要求
-1. 严格按照报告模板结构输出
-2. 执行摘要控制在150字以内
-3. Top3策略必须详细展开
-4. 策略对比表必须包含
-5. 风险提示必须明确具体
-6. 行动清单要可操作
-7. 使用Markdown格式
-8. 数据精确到小数点后2位
-9. 日期格式: YYYY-MM-DD
+请严格遵守以下 4 条指令 (Checklist):
 
-请生成完整的Markdown报告。"""
+[位置]: 必须将 交易决策面板 置于报告最顶端。
+
+[风控]: 若 Price 为 0，必须在面板触发 "Abstain"。
+
+[逻辑]: 检查 Agent 6 的策略方向是否正确，并在报告中清晰阐述。
+
+[推演]: 在“微观结构”章节，必须清晰阐述 ECR（钉住风险）和 SER（接力能力）是如何影响当前具体的 Nearby Peak 和 Secondary Peak 的，禁止只列数字。
+"""

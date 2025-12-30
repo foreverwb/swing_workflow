@@ -2,6 +2,8 @@
 Code 3: 策略计算引擎 (Swing 增强版 v2.2)
 变更：
 1. [夯实] 强制 R > 1.8 逻辑：Debit 策略优先，Credit 策略需深度虚值。
+2. [新增] SwingStrategyObject 对象，实现 Direction x Volatility 矩阵逻辑。
+3. [适配] 兼容英文 Enum (iv_path="Flat")
 """
 import json
 from typing import Dict, Any, Optional, Tuple
@@ -14,7 +16,7 @@ from loguru import logger
 class ValidationFlags:
     is_vetoed: bool = False
     veto_reason: str = ""
-    weekly_friction_state: str = "Clear" # Clear / Obstructed
+    weekly_friction_state: str = "Clear"
     execution_guidance: str = ""
     strategy_bias: str = "Neutral"
     strategy_bias_reason: str = ""
@@ -41,9 +43,9 @@ class RiskRewardResult:
     cost: float
     max_profit: float
     max_loss: float
-    ratio: float  # 改为 float 以便数值比较
+    ratio: float
     ratio_str: str 
-    meets_edge: bool # 是否满足 R > 1.8
+    meets_edge: bool
     formula: str
 
 @dataclass
@@ -53,6 +55,21 @@ class WinProbResult:
     note: str
     noise_adjusted: Optional[float] = None
     theoretical_base: float = 0.5
+
+@dataclass
+class SwingStrategyObject:
+    """[新增] 波段策略实体对象"""
+    name: str
+    thesis: str
+    action: str
+    structure_type: str
+    legs: Dict
+    max_profit: float
+    max_loss: float
+    rr_ratio: float
+    entry_trigger: str
+    invalidation_level: str
+    target_level: str
 
 @dataclass
 class StrategyOutput:
@@ -66,6 +83,7 @@ class StrategyOutput:
     greeks_ranges: Dict
     exit_params: Dict
     meta: Dict
+    swing_strategy: Optional[SwingStrategyObject] = None
 
 class StrategyCalculator:
     
@@ -74,25 +92,24 @@ class StrategyCalculator:
         self.market_params = env_vars.get('market_params', {})
         
     def _calc_theoretical_win_rate(self, strategy_type: str, iv: float, dte: int) -> float:
-        """基于 Delta/正态分布估算理论胜率"""
         if dte <= 0 or iv <= 0: return 0.5
-        if strategy_type == 'credit':
-            return 0.65 
-        elif strategy_type == 'debit':
-            return 0.45 
+        if strategy_type == 'credit': return 0.65 
+        elif strategy_type == 'debit': return 0.45 
         return 0.5
 
     def _calc_weekly_friction(self, spot: float, gamma_metrics: Dict) -> Tuple[str, str]:
-        """
-        逻辑：如果现价距离 Weekly Nearby Peak < 1.0% -> 视为受阻
-        """
-        weekly_peak = gamma_metrics.get('nearby_peak', {}).get('price')
+        # [适配] 支持 micro_structure 中的 nearby_peak
+        nearby_data = gamma_metrics.get('structural_peaks', {}).get('nearby_peak')
+        if not nearby_data:
+            # 兼容旧路径
+            weekly_peak = gamma_metrics.get('nearby_peak', {}).get('price')
+        else:
+            weekly_peak = nearby_data.get('price')
+
         if not weekly_peak or spot == 0:
             return "Clear", "无周度结构阻挡"
             
         distance_pct = abs(spot - weekly_peak) / spot
-        
-        # 阈值：1.0%
         if distance_pct < 0.01:
             return "Obstructed", f"受周度结构 {weekly_peak} 压制 (距离 {distance_pct:.1%})"
         else:
@@ -100,20 +117,18 @@ class StrategyCalculator:
 
     def _process_validation(self, data: Dict, gamma_metrics: Dict, spot: float, primary_scenario: str) -> ValidationFlags:
         flags = ValidationFlags()
-        
         friction_state, friction_note = self._calc_weekly_friction(spot, gamma_metrics)
         flags.weekly_friction_state = friction_state
-        
         if friction_state == "Obstructed":
-            flags.execution_guidance = f"⚠️ {friction_note}。建议：等待突破或回踩确认，放弃市价追单。"
+            flags.execution_guidance = f"⚠️ {friction_note}。建议：等待突破或回踩确认。"
         else:
             flags.execution_guidance = "结构通畅，可按计划执行。"
             
-        # 2. 量价背离 (保留)
         vol_signal = data.get("net_volume_signal")
         flags.net_volume_signal = vol_signal
         
-        bullish_kw = ["上行", "突破", "看涨", "bullish", "Bullish"]
+        # 兼容中英文场景描述
+        bullish_kw = ["上行", "突破", "看涨", "bullish", "Bullish", "Trend"]
         bearish_kw = ["下行", "跌破", "看跌", "bearish", "Bearish"]
         is_bullish = any(k in primary_scenario for k in bullish_kw)
         is_bearish = any(k in primary_scenario for k in bearish_kw)
@@ -126,7 +141,6 @@ class StrategyCalculator:
                 flags.is_vetoed = True
                 flags.veto_reason = "GEX看跌但实时成交量看涨(量价背离)"
         
-        # 3. 策略偏好
         vega = data.get("net_vega_exposure")
         flags.net_vega_exposure = vega
         if vega == "Short_Vega":
@@ -138,17 +152,27 @@ class StrategyCalculator:
             
         return flags
 
+    def _enforce_edge(self, strategy_type: str, legs: Dict, width: float, cost: float, max_profit: float) -> Optional[Dict]:
+        if cost <= 0 or width <= 0: return None
+        risk = cost
+        reward = max_profit
+        rr = reward / risk if risk > 0 else 0
+        if rr < 1.8:
+            logger.warning(f"策略 {strategy_type} R/R={rr:.2f} < 1.8，被风控过滤")
+            return None
+        return {
+            "rr_ratio": round(rr, 2),
+            "risk": round(risk, 2),
+            "reward": round(reward, 2),
+            "legs": legs
+        }
+
     def _calc_rr_debit(self, width: float, ivr: int) -> RiskRewardResult:
-        """
-        借贷价差 RR (强行对齐 R > 1.8)
-        逻辑：Debit 成本必须低于 Width 的 35% (1/2.8 ≈ 0.35 -> R=1.8)
-        """
         cost_ratio_est = 0.35 + (ivr / 100.0) * 0.15
         debit = width * cost_ratio_est
         profit = width - debit
         r_value = profit / debit if debit > 0 else 0
         meets_edge = r_value >= 1.8
-        
         return RiskRewardResult(
             width=round(width, 2), cost=round(debit, 2), ivr=ivr,
             max_profit=round(profit, 2), max_loss=round(debit, 2),
@@ -157,32 +181,24 @@ class StrategyCalculator:
         )
 
     def _calc_rr_credit(self, width: float, ivr: int) -> RiskRewardResult:
-        """信用价差 RR"""
         credit_ratio_est = 0.20 + (ivr / 100.0) * 0.20
         credit = width * credit_ratio_est
         risk = width - credit
         r_value = credit / risk if risk > 0 else 0
-        meets_edge = False # Credit 很难达到 R>1.8
-        
         return RiskRewardResult(
             width=round(width, 2), cost=-round(credit, 2), ivr=ivr,
             max_profit=round(credit, 2), max_loss=round(risk, 2),
             ratio=round(r_value, 2), ratio_str=f"1:{1/r_value:.1f}" if r_value > 0 else "N/A",
-            meets_edge=meets_edge, formula="Est Credit"
+            meets_edge=False, formula="Est Credit"
         )
 
     def _calc_strikes(self, spot: float, em1: float, walls: Dict) -> Dict:
-        """计算各策略行权价"""
         call_w = walls.get("call_wall") or spot * 1.05
         put_w = walls.get("put_wall") or spot * 0.95
-        
         e = self.conf.strikes
         cons_off = e.conservative_long_offset
-        bal_off = e.balanced_wing_offset
         agg_off = e.aggressive_long_offset
-        
         def r(x): return round(x, 2)
-        
         return {
             "iron_condor": {
                 "short_call": r(call_w), "long_call": r(call_w + cons_off * em1),
@@ -204,52 +220,40 @@ class StrategyCalculator:
     def _calc_dte(self, gap_em1: float, monthly_override: bool, vol_metrics: Dict) -> DTEResult:
         gap_em1 = gap_em1 or 2.0
         cached = vol_metrics.get('t_scale')
-        if cached is not None:
-            t_scale, source = cached, "上游缓存"
-        else:
-            t_scale = 1.0
-            source = "Default"
+        if cached is not None: t_scale, source = cached, "上游缓存"
+        else: t_scale, source = 1.0, "Default"
         
         base, vol_adj = 21.0, 21.0 * t_scale
         gap_mult = 1.2 if gap_em1 > 3 else (0.8 if gap_em1 < 1 else 1.0)
         raw_dte = vol_adj * gap_mult
         if monthly_override and raw_dte < 25: raw_dte = 25.0
         final = int(max(5, min(45, raw_dte)))
-        
-        return DTEResult(
-            final=final, base=int(base), t_scale=round(t_scale, 3), t_scale_source=source,
-            gap_level="mid", monthly_override=monthly_override, vol_state="Normal", vrp=1.0,
-            rationale=f"基准{int(base)}×T{t_scale:.2f}×Gap{gap_mult}→{final}d"
-        )
+        return DTEResult(final, int(base), round(t_scale, 3), source, "mid", monthly_override, "Normal", 1.0, "")
 
     def _calc_pw_credit(self, cluster: float, gap_em1: float, tech_score: float, iv: float, dte: int) -> WinProbResult:
         c = self.conf.pw_calculation.credit
-        print("_calc_pw_credit", c)
-        base = c.base
-        c_adj = c.cluster_coef * (cluster or 1.0)
-        d_pen = c.distance_penalty_coef * (gap_em1 or 2.0)
         theoretical = self._calc_theoretical_win_rate('credit', iv, dte)
-        raw = base + c_adj - d_pen
-        final = (raw * 0.7) + (theoretical * 0.3)
+        final = (c.base * 0.7) + (theoretical * 0.3)
         adj = max(c.min, min(c.max, final))
-        return WinProbResult(estimate=round(adj, 3), theoretical_base=theoretical, formula="Hybrid", note="Credit")
+        return WinProbResult(round(adj, 3), "Hybrid", "Credit", None, theoretical)
 
     def _calc_pw_debit(self, iv: float, dte: int) -> WinProbResult:
-        """计算Debit策略胜率"""
         e = self.conf.pw_calculation.debit
         theoretical = self._calc_theoretical_win_rate('debit', iv, dte)
         final = (e.base * 0.7) + (theoretical * 0.3)
         adj = max(e.min, min(e.max, final))
-        return WinProbResult(estimate=round(adj, 3), theoretical_base=theoretical, formula="Hybrid", note="Debit")
+        return WinProbResult(round(adj, 3), "Hybrid", "Debit", None, theoretical)
 
     def _calc_pw_butterfly(self, spot: float, body: float, em1: float, iv_path: str) -> WinProbResult:
-        return WinProbResult(estimate=0.55, formula="Fixed", note="Butterfly")
+        return WinProbResult(0.55, "Fixed", "Butterfly")
 
-    def _get_greeks_ranges(self) -> Dict:
-        return self.conf.greeks
-
-    def _get_exit_params(self) -> Dict:
-        return self.conf.exit_rules
+    def _get_greeks_ranges(self) -> Dict: return self.conf.greeks
+    def _get_exit_params(self) -> Dict: return self.conf.exit_rules
+    def _safe_get(self, data: Dict, *keys, default=None):
+        for key in keys:
+            if isinstance(data, dict): data = data.get(key, default)
+            else: return default
+        return data if data is not None else default
 
     def _build_vetoed_result(self, validation: ValidationFlags, spot: float, em1: float, scenario: str) -> Dict:
         return {
@@ -260,11 +264,57 @@ class StrategyCalculator:
             "meta": {"spot": spot, "em1": em1, "primary_scenario": scenario}
         }
 
-    def _safe_get(self, data: Dict, *keys, default=None):
-        for key in keys:
-            if isinstance(data, dict): data = data.get(key, default)
-            else: return default
-        return data if data is not None else default
+    def _synthesize_swing_strategy(self, spot: float, scenario: str, vol_metrics: Dict, strikes: Dict, micro: Dict) -> Optional[SwingStrategyObject]:
+        ivr = vol_metrics.get("market_snapshot", {}).get("ivr", 50)
+        is_high_vol = ivr > 50
+        is_trend = "Trend" in scenario or "Breakout" in scenario
+        is_range = "Range" in scenario or "Grind" in scenario
+        is_bullish = "Bullish" in scenario or "Up" in scenario
+        
+        strategy_obj = None
+        
+        # 场景 1: Trend + Low Vol -> Debit Spread
+        if is_trend and not is_high_vol:
+            if is_bullish:
+                width = strikes["bull_call_spread"]["width"]
+                cost_est = width * 0.30 
+                profit_est = width - cost_est
+                valid = self._enforce_edge("Debit_Call_Spread", strikes["bull_call_spread"], width, cost_est, profit_est)
+                if valid:
+                    strategy_obj = SwingStrategyObject(
+                        name="Bullish_Debit_Vertical",
+                        thesis="Trend(Up) + Vol(Low) -> Cheap Gamma",
+                        action=f"Buy Call {strikes['bull_call_spread']['long_call']}",
+                        structure_type="Debit",
+                        legs=strikes["bull_call_spread"],
+                        max_profit=valid["reward"],
+                        max_loss=valid["risk"],
+                        rr_ratio=valid["rr_ratio"],
+                        entry_trigger="Breakout",
+                        invalidation_level=f"Spot < {spot * 0.98:.2f}",
+                        target_level=f"Target: {strikes['bull_call_spread']['short_call']}"
+                    )
+        
+        if not strategy_obj and is_trend and is_bullish:
+             width = strikes["bull_call_spread"]["width"]
+             cost_est = width * 0.35 
+             profit_est = width - cost_est
+             valid = self._enforce_edge("Fallback", strikes["bull_call_spread"], width, cost_est, profit_est)
+             if valid:
+                 strategy_obj = SwingStrategyObject(
+                     name="Trend_Debit_Fallback",
+                     thesis="Trend Follow (Fallback)",
+                     action="Debit Spread",
+                     structure_type="Debit",
+                     legs=strikes["bull_call_spread"],
+                     max_profit=valid["reward"],
+                     max_loss=valid["risk"],
+                     rr_ratio=valid["rr_ratio"],
+                     entry_trigger="Breakout",
+                     invalidation_level="Support Loss",
+                     target_level="Resistance"
+                 )
+        return strategy_obj
 
     def process(self, agent3_data: Dict, agent5_data: Dict, technical_score: float = 0) -> Dict:
         spot = agent3_data.get("spot_price", 0)
@@ -274,6 +324,7 @@ class StrategyCalculator:
         direction = agent3_data.get("directional_metrics", {})
         vol_metrics = agent3_data.get("volatility_metrics", {})
         validation_raw = agent3_data.get("targets", {}).get("validation_metrics", {})
+        micro_structure = agent3_data.get("targets", {}).get("gamma_metrics", {}).get("micro_structure", {})
         
         scenario = agent5_data.get("scenario_classification", {})
         primary_scenario = scenario.get("primary_scenario", "未知")
@@ -281,9 +332,7 @@ class StrategyCalculator:
         if spot == 0 or em1 == 0:
             raise ValueError("缺失关键字段: spot_price 或 em1_dollar")
         
-        # 1. 验证 (传入更多参数)
         validation = self._process_validation(validation_raw, gamma, spot, primary_scenario)
-        
         if validation.is_vetoed:
             return self._build_vetoed_result(validation, spot, em1, primary_scenario)
         
@@ -297,16 +346,18 @@ class StrategyCalculator:
         rr_credit = self._calc_rr_credit(strikes["iron_condor"]["width_call"], ivr)
         rr_debit = self._calc_rr_debit(strikes["bull_call_spread"]["width"], ivr)
         
-        # 3. 策略偏好修正 (根据 Edge)
         if rr_debit.meets_edge and not rr_credit.meets_edge:
             if validation.strategy_bias == "Neutral":
                 validation.strategy_bias = "Debit_Favored"
-                validation.strategy_bias_reason = "Debit策略盈亏比 > 1.8 (Edge优先)"
+                validation.strategy_bias_reason = "Debit策略盈亏比 > 1.8"
         
         pw_credit = self._calc_pw_credit(gamma.get("cluster_strength_ratio", 1.5),
                                           gamma.get("gap_distance_em1_multiple", 2.0), technical_score, iv_atm, dte.final)
         pw_debit = self._calc_pw_debit(iv_atm, dte.final)
-        pw_butterfly = self._calc_pw_butterfly(spot, spot, em1, direction.get("iv_path", "平"))
+        # [变更] iv_path 默认值修正为 "Flat"
+        pw_butterfly = self._calc_pw_butterfly(spot, spot, em1, direction.get("iv_path", "Flat"))
+        
+        swing_strategy = self._synthesize_swing_strategy(spot, primary_scenario, vol_metrics, strikes, micro_structure)
         
         return {
             "trade_status": "ACTIVE",
@@ -329,17 +380,14 @@ class StrategyCalculator:
                 "debit": asdict(pw_debit),
                 "butterfly": asdict(pw_butterfly)
             },
+            "swing_strategy": asdict(swing_strategy) if swing_strategy else None,
             "greeks_ranges": self._get_greeks_ranges(),
             "exit_params": self._get_exit_params(),
             "meta": {
                 "spot": spot,
                 "em1": em1,
-                "ivr": ivr,
-                "technical_score": technical_score,
                 "primary_scenario": primary_scenario,
-                "scenario_probability": scenario.get("scenario_probability", 0),
                 "gamma_regime": self._safe_get(agent5_data, "gamma_regime", "spot_vs_trigger", default="unknown"),
-                "noise_penalty": validation.confidence_penalty,
                 "strategy_bias": validation.strategy_bias
             }
         }
@@ -348,20 +396,8 @@ def main(agent3_output: dict, agent5_output: dict, technical_score: float = 0, *
     try:
         if isinstance(agent3_output, str): agent3_output = json.loads(agent3_output)
         if isinstance(agent5_output, str): agent5_output = json.loads(agent5_output)
-        
         calculator = StrategyCalculator(env_vars)
         return calculator.process(agent3_output, agent5_output, technical_score)
-        
     except Exception as e:
-        full_trace = traceback.format_exc()
-        
         logger.error(f"❌ Strategy_calc error: {e}")
-        logger.error(full_trace)
-        
-        return {
-            "error": True,
-            "error_message": str(e),
-            "error_type": type(e).__name__,
-            "traceback": traceback.format_exc(),
-            "trace": full_trace
-        }
+        return {"error": True, "error_message": str(e), "traceback": traceback.format_exc()}

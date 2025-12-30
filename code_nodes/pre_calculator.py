@@ -62,6 +62,7 @@ class MarketStateCalculator:
                     "dyn_dte_mid": "7 w",
                     "dyn_dte_long_backup": "14 w",
                     "dyn_window": 20,
+                    "scenario": "Squeeze/Panic"
                 })
             # 场景 2: Squeeze / Panic (个股独角戏)
             # 逻辑：个股爆发，大盘稳，关注稍长的爆发期
@@ -72,6 +73,7 @@ class MarketStateCalculator:
                     "dyn_dte_mid": "14 w",
                     "dyn_dte_long_backup": "30 w",
                     "dyn_window": 45,
+                    "scenario": "Squeeze/Panic"
                 })
                 
         # 场景 3: Grind / Low Vol (双低)
@@ -84,6 +86,7 @@ class MarketStateCalculator:
                     "dyn_dte_mid": "60 m",
                     "dyn_dte_long_backup": "90 m",
                     "dyn_window": 90,
+                    "scenario": "Grind/Low Vol"
                 })
             # 场景 4: Grind / High VIX (背离)
             # 逻辑：大盘恐慌个股抗跌，避险配置
@@ -94,6 +97,7 @@ class MarketStateCalculator:
                     "dyn_dte_mid": "45 w",
                     "dyn_dte_long_backup": "60 m",
                     "dyn_window": 60,
+                    "scenario": "Grind/High VIX"
                 })
         
         return params

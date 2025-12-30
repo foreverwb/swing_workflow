@@ -1,10 +1,6 @@
 """
-CODE5 - HTML 报告生成节点 (修复版 v2.2)
-修复内容:
-1. JS 语法升级: var -> let
-2. F-string 转义: 修复 CSS/JS 中大括号导致的 SyntaxError
+CODE5 - HTML 报告生成节点 (v3.5.3 - Direct Icon Link)
 """
-
 import re
 import json
 from pathlib import Path
@@ -12,575 +8,275 @@ from datetime import datetime
 from typing import Dict, Any, List, Optional
 from loguru import logger
 import traceback
+from utils.config_loader import config
 
-def markdown_to_html(text: str) -> str:
-    """
-    简易 Markdown 转 HTML 转换器
-    支持: 标题, 列表, 粗体, 代码块, 表格
-    """
-    if not text: return ""
+class HTMLTemplate:
+    CSS = """
+    :root {
+        --bg-body: #f8fafc; --bg-card: #ffffff; 
+        --text-main: #0f172a; --text-sub: #64748b;
+        --accent: #2563eb; --accent-light: #eff6ff;
+        --border: #e2e8f0;
+        --success: #10b981; --warning: #f59e0b; --danger: #ef4444;
+    }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, "Microsoft YaHei", sans-serif; background: var(--bg-body); color: var(--text-main); line-height: 1.6; max-width: 1200px; margin: 0 auto; padding: 20px; }
     
-    lines = text.split('\n')
-    html_lines = []
-    in_list = False
-    in_code = False
-    in_table = False
-    table_header_done = False
+    /* Card System */
+    .card { background: var(--bg-card); border-radius: 12px; border: 1px solid var(--border); box-shadow: 0 1px 3px rgba(0,0,0,0.05); margin-bottom: 20px; overflow: hidden; }
+    .card-header { padding: 15px 20px; border-bottom: 1px solid var(--border); background: #f8fafc; font-weight: 600; font-size: 14px; text-transform: uppercase; color: var(--text-sub); letter-spacing: 0.5px; display: flex; justify-content: space-between; align-items: center; }
+    .card-body { padding: 20px; }
     
-    for i, line in enumerate(lines):
-        line = line.strip()
-        
-        # 代码块处理
-        if line.startswith('```'):
-            if in_code:
-                html_lines.append('</pre></div>')
-                in_code = False
-            else:
-                html_lines.append('<div class="code-block"><pre>')
-                in_code = True
-            continue
-            
-        if in_code:
-            html_lines.append(line)
-            continue
-            
-        # 标题处理
-        if line.startswith('#'):
-            if in_table:
-                html_lines.append('</tbody></table>')
-                in_table = False
-                table_header_done = False
-            level = len(line.split(' ')[0])
-            content = line[level:].strip()
-            html_lines.append(f'<h{level}>{content}</h{level}>')
-            continue
-            
-        # 列表处理
-        if line.startswith('- ') or line.startswith('* '):
-            if in_table:
-                html_lines.append('</tbody></table>')
-                in_table = False
-                table_header_done = False
-            if not in_list:
-                html_lines.append('<ul>')
-                in_list = True
-            content = line[2:].strip()
-            # 处理粗体
-            content = re.sub(r'\*\*(.*?)\*\*', r'<strong>\1</strong>', content)
-            html_lines.append(f'<li>{content}</li>')
-            continue
-        elif in_list:
-            html_lines.append('</ul>')
-            in_list = False
-            
-        # 表格处理 (完整版)
-        if '|' in line:
-            # 跳过分隔符行 (如 |------|------|)
-            if re.match(r'^[\|\s\-:]+$', line):
-                continue
-            
-            cols = [c.strip() for c in line.split('|') if c.strip()]
-            if cols:
-                # 检查是否是表头行（下一行是分隔符）
-                next_line = lines[i + 1].strip() if i + 1 < len(lines) else ""
-                is_header = re.match(r'^[\|\s\-:]+$', next_line)
-                
-                if not in_table:
-                    html_lines.append('<table class="strategy-table">')
-                    in_table = True
-                    table_header_done = False
-                
-                if is_header and not table_header_done:
-                    # 表头行
-                    row_html = "".join([f"<th>{c}</th>" for c in cols])
-                    html_lines.append(f"<thead><tr>{row_html}</tr></thead><tbody>")
-                    table_header_done = True
-                else:
-                    # 数据行
-                    row_html = "".join([f"<td>{c}</td>" for c in cols])
-                    html_lines.append(f"<tr>{row_html}</tr>")
-                continue
-        elif in_table:
-            html_lines.append('</tbody></table>')
-            in_table = False
-            table_header_done = False
-            
-        # 普通段落
-        if line:
-            content = line
-            content = re.sub(r'\*\*(.*?)\*\*', r'<strong>\1</strong>', content)
-            html_lines.append(f'<p>{content}</p>')
-            
-    # 关闭未闭合的标签
-    if in_list:
-        html_lines.append('</ul>')
-    if in_table:
-        html_lines.append('</tbody></table>')
-        
-    return '\n'.join(html_lines)
+    /* Monitor Grid */
+    .monitor-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; margin-bottom: 30px; }
+    
+    /* Metrics */
+    .metric-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+    .metric-label { color: var(--text-sub); font-size: 13px; }
+    .metric-value { font-weight: 700; font-size: 16px; color: var(--text-main); }
+    .metric-sub { font-size: 11px; color: var(--text-sub); }
+    
+    /* Progress Bar */
+    .progress-container { background: #f1f5f9; height: 6px; border-radius: 3px; overflow: hidden; margin-top: 4px; }
+    .progress-bar { height: 100%; border-radius: 3px; transition: width 0.5s ease; }
+    
+    /* Tags */
+    .tag { padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; text-transform: uppercase; }
+    .tag-green { background: #dcfce7; color: #166534; }
+    .tag-red { background: #fee2e2; color: #991b1b; }
+    .tag-blue { background: #dbeafe; color: #1e40af; }
+    .tag-orange { background: #ffedd5; color: #9a3412; }
+    
+    /* Header */
+    .main-header { display: flex; align-items: center; gap: 15px; margin-bottom: 30px; }
+    .symbol-logo { width: 48px; height: 48px; border-radius: 50%; background: white; border: 1px solid var(--border); padding: 4px; object-fit: contain; }
+    .header-info h1 { margin: 0; font-size: 24px; color: var(--text-main); }
+    .header-info .meta { color: var(--text-sub); font-size: 13px; }
 
-def format_snapshot_content(snapshot: Dict) -> str:
-    """将快照数据格式化为 HTML 内容"""
-    targets = snapshot.get("targets", {})
-    drift = snapshot.get("drift_report", {})
-    
-    # 提取数据
-    spot = targets.get("spot_price", "N/A")
-    em1 = targets.get("em1_dollar", "N/A")
-    trigger = targets.get("gamma_metrics", {}).get("vol_trigger", "N/A")
-    regime = targets.get("gamma_metrics", {}).get("spot_vs_trigger", "N/A")
-    
-    # 构建 HTML
-    # 注意：这里的 f-string 内部不需要转义大括号，因为没有嵌套在更大的 f-string 模板中
-    html = f'''
-    <div class="metrics-grid">
-        <div class="metric-card">
-            <div class="metric-label">当前价格 (Spot)</div>
-            <div class="metric-val" style="color: var(--accent);">${spot}</div>
-        </div>
-        <div class="metric-card">
-            <div class="metric-label">Vol Trigger</div>
-            <div class="metric-val">${trigger}</div>
-            <div class="metric-label" style="color: {'#10b981' if regime=='above' else '#ef4444'}">{regime}</div>
-        </div>
-        <div class="metric-card">
-            <div class="metric-label">EM1$ (Expected Move)</div>
-            <div class="metric-val">${em1}</div>
-        </div>
-    </div>
-    '''
-    
-    # 漂移报告
-    if drift:
-        summary = drift.get("summary", "")
-        html += f'<div class="info-box"><strong>🛡️ 结构状态:</strong> {summary}</div>'
-        
-        # 告警
-        alerts = drift.get("alerts", [])
-        if alerts:
-            html += '<div class="alert-box"><h4>⚠️ 风险警示</h4><ul>'
-            for alert in alerts:
-                html += f'<li>{alert}</li>'
-            html += '</ul></div>'
-            
-        # 操作建议
-        actions = drift.get("actions", [])
-        if actions:
-            html += '<div class="action-box"><h4>⚡ 操作建议</h4><ul>'
-            for action in actions:
-                side = "多头" if action['side'] == 'long' else "空头" if action['side'] == 'short' else "全部"
-                type_map = {"stop_loss": "止损", "take_profit": "止盈", "hold": "持有", "reduce_risk": "减仓", "exit": "离场", "tighten_stop": "收紧止损", "clear_position": "清仓"}
-                act_type = type_map.get(action['type'], action['type'])
-                html += f'<li><strong>[{side}] {act_type}:</strong> {action["reason"]}</li>'
-            html += '</ul></div>'
-            
-        # 变化细节
-        changes = drift.get("changes", [])
-        if changes:
-            html += '<div><h4>📉 结构数据漂移</h4><ul>'
-            for change in changes:
-                html += f'<li style="color: var(--text-sub);">{change}</li>'
-            html += '</ul></div>'
-            
-    return html
+    /* Markdown Overrides */
+    .markdown-body h2 { border-bottom: 2px solid var(--accent); padding-bottom: 8px; font-size: 1.4em; margin-top: 1.5em; }
+    .markdown-body h3 { color: var(--accent); font-size: 1.1em; margin-top: 1.2em; }
+    .markdown-body blockquote { border-left: 4px solid var(--accent); background: var(--accent-light); padding: 10px 15px; margin: 15px 0; border-radius: 0 4px 4px 0; color: #1e3a8a; }
+    """
 
-def get_dashboard_template(symbol: str, tabs: List[Dict]) -> str:
-    """
-    生成带 Tab 的仪表盘 HTML 模板
-    注意：此函数返回一个巨大的 f-string，其中 CSS 和 JS 的大括号必须转义 ({{, }})
-    """
-    
-    # 生成 Tab 导航 HTML
-    nav_html = ""
-    content_html = ""
-    
-    for i, tab in enumerate(tabs):
-        active_class = "active" if i == 0 else ""
-        nav_html += f'''
-            <button class="tab-btn {active_class}" onclick="openTab(event, '{tab['id']}')">
-                {tab['title']}
-            </button>
-        '''
-        content_html += f'''
-            <div id="{tab['id']}" class="tab-content {active_class}">
-                {tab['content']}
-            </div>
-        '''
-    
-    # 生成时间戳
-    update_time = datetime.now().strftime("%H:%M:%S")
-    
-    # 返回完整的 HTML 字符串
-    # 关键：CSS 和 JS 中的 { } 必须写成 {{ }}
-    return f"""<!DOCTYPE html>
+    @classmethod
+    def get_html(cls, symbol: str, favicon: str, monitor_html: str, report_html: str) -> str:
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        # 备用 Logo
+        
+        return f"""<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{symbol} 策略监控仪表盘</title>
-    <style>
-        :root {{
-            --bg-body: #f8fafc;
-            --bg-card: #ffffff;
-            --bg-nav: #f1f5f9;
-            --bg-hover: #e2e8f0;
-            --text-main: #1e293b;
-            --text-sub: #64748b;
-            --accent: #2563eb;
-            --active-tab: #2563eb;
-            --border: #e2e8f0;
-            --danger: #dc2626;
-            --success: #16a34a;
-            --warning: #d97706;
-        }}
-        
-        body {{
-            font-family: 'Segoe UI', system-ui, sans-serif;
-            background-color: var(--bg-body);
-            color: var(--text-main);
-            margin: 0;
-            padding: 20px;
-            line-height: 1.6;
-        }}
-        
-        .container {{ max-width: 1000px; margin: 0 auto; }}
-        
-        /* Header */
-        .header {{
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 20px;
-            padding-bottom: 10px;
-            border-bottom: 2px solid var(--border);
-        }}
-        .header h1 {{ margin: 0; font-size: 24px; color: var(--accent); }}
-        .header .badge {{ 
-            background: var(--bg-nav); padding: 4px 12px; 
-            border-radius: 20px; font-size: 12px; color: var(--text-sub);
-            border: 1px solid var(--border);
-        }}
-        
-        /* Tabs Navigation */
-        .tab-nav {{
-            display: flex;
-            background: var(--bg-card);
-            border-radius: 8px 8px 0 0;
-            overflow: hidden;
-            border: 1px solid var(--border);
-            border-bottom: none;
-        }}
-        
-        .tab-btn {{
-            background: transparent;
-            border: none;
-            outline: none;
-            cursor: pointer;
-            padding: 14px 24px;
-            font-size: 14px;
-            color: var(--text-sub);
-            transition: 0.3s;
-            font-weight: 600;
-        }}
-        
-        .tab-btn:hover {{ background-color: var(--bg-hover); color: var(--text-main); }}
-        
-        .tab-btn.active {{
-            background-color: var(--active-tab);
-            color: white;
-        }}
-        
-        /* Tab Content */
-        .tab-content {{
-            display: none;
-            background: var(--bg-card);
-            padding: 30px;
-            border-radius: 0 0 8px 8px;
-            min-height: 500px;
-            animation: fadeEffect 0.5s;
-            border: 1px solid var(--border);
-            border-top: none;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
-        }}
-        
-        .tab-content.active {{ display: block; }}
-        
-        @keyframes fadeEffect {{
-            from {{opacity: 0;}}
-            to {{opacity: 1;}}
-        }}
-        
-        /* Snapshot Specific Styles */
-        .metrics-grid {{
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 20px;
-            margin-bottom: 30px;
-        }}
-        
-        .metric-card {{
-            background: var(--bg-nav);
-            padding: 15px;
-            border-radius: 8px;
-            text-align: center;
-            border: 1px solid var(--border);
-        }}
-        .metric-val {{ font-size: 24px; font-weight: bold; margin: 5px 0; color: var(--text-main); }}
-        .metric-label {{ font-size: 12px; color: var(--text-sub); text-transform: uppercase; }}
-        
-        .alert-box {{
-            background: #fef2f2;
-            border-left: 4px solid var(--danger);
-            padding: 15px;
-            margin-bottom: 20px;
-            border-radius: 0 4px 4px 0;
-        }}
-        
-        .action-box {{
-            background: #f0fdf4;
-            border-left: 4px solid var(--success);
-            padding: 15px;
-            margin-bottom: 20px;
-            border-radius: 0 4px 4px 0;
-        }}
-        
-        .info-box {{
-            background: #eff6ff;
-            border-left: 4px solid var(--accent);
-            padding: 15px;
-            margin-bottom: 20px;
-            border-radius: 0 4px 4px 0;
-        }}
-        
-        h3 {{ color: var(--text-main); border-bottom: 1px solid var(--border); padding-bottom: 8px; }}
-        
-        /* Markdown Content Styles */
-        .markdown-body {{ font-size: 15px; }}
-        .markdown-body h1 {{ color: var(--accent); margin-top: 20px; font-size: 22px; }}
-        .markdown-body h2 {{ color: var(--accent); margin-top: 20px; font-size: 18px; }}
-        .markdown-body h3 {{ color: var(--text-main); margin-top: 15px; font-size: 16px; }}
-        
-        /* 列表样式 */
-        .markdown-body ul {{ 
-            padding-left: 20px; 
-            margin: 10px 0;
-        }}
-        .markdown-body li {{ 
-            margin-bottom: 8px; 
-            color: var(--text-main);
-        }}
-        
-        /* 通用表格样式 */
-        .markdown-body table, 
-        .strategy-table {{ 
-            width: 100%; 
-            border-collapse: collapse; 
-            margin: 20px 0; 
-            background: var(--bg-card);
-            border-radius: 8px;
-            overflow: hidden;
-            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-        }}
-        .markdown-body th, .markdown-body td,
-        .strategy-table th, .strategy-table td {{ 
-            border: 1px solid var(--border); 
-            padding: 12px 15px; 
-            text-align: left;
-        }}
-        .markdown-body th,
-        .strategy-table th {{ 
-            background: var(--bg-nav); 
-            font-weight: 600;
-            color: var(--text-main);
-        }}
-        .markdown-body tr:nth-child(even),
-        .strategy-table tr:nth-child(even) {{ 
-            background: var(--bg-body); 
-        }}
-        .markdown-body tr:hover,
-        .strategy-table tr:hover {{ 
-            background: var(--bg-hover); 
-        }}
-        
-        /* 代码块样式 */
-        .code-block {{
-            background: var(--bg-nav);
-            border: 1px solid var(--border);
-            border-radius: 6px;
-            padding: 15px;
-            margin: 15px 0;
-            overflow-x: auto;
-        }}
-        .code-block pre {{
-            margin: 0;
-            font-family: 'Consolas', 'Monaco', monospace;
-            font-size: 13px;
-            color: var(--text-main);
-        }}
-        
-        /* 段落样式 */
-        .markdown-body p {{
-            margin: 10px 0;
-            color: var(--text-main);
-        }}
-        
-    </style>
+    <title>{symbol}-RPT-{datetime.now().strftime("%Y-%m-%d")}</title>
+    <link rel="icon" href="{favicon}">
+    <style>{cls.CSS}</style>
 </head>
 <body>
-
-<div class="container">
-    <div class="header">
-        <h1>🔭 {symbol} 策略监控仪表盘</h1>
-        <div class="badge">Last Updated: {update_time}</div>
+    <div class="main-header">
+        <img src="{favicon}" class="symbol-logo" onerror="this.src='{favicon}'">
+        <div class="header-info">
+            <h1>{symbol}--{datetime.now().strftime("%Y-%m-%d")}</h1>
+            <div class="meta">生成时间: {ts} • PHASE 3 引擎</div>
+        </div>
     </div>
 
-    <div class="tab-nav">
-        {nav_html}
+    {monitor_html}
+
+    <div class="card">
+        <div class="card-header">
+            <span>基础与战术报告</span>
+            <span>AGENT 8</span>
+        </div>
+        <div class="card-body">
+            <div class="markdown-body">
+                {report_html}
+            </div>
+        </div>
     </div>
-
-    {content_html}
-
-</div>
-
-<script>
-function openTab(evt, tabName) {{
-    // 使用 let 替代 var
-    let i, tabcontent, tablinks;
-    
-    // Hide all tab content
-    tabcontent = document.getElementsByClassName("tab-content");
-    for (i = 0; i < tabcontent.length; i++) {{
-        tabcontent[i].style.display = "none";
-        tabcontent[i].classList.remove("active");
-    }}
-    
-    // Remove active class from all buttons
-    tablinks = document.getElementsByClassName("tab-btn");
-    for (i = 0; i < tablinks.length; i++) {{
-        tablinks[i].className = tablinks[i].className.replace(" active", "");
-    }}
-    
-    // Show current tab and add active class to button
-    document.getElementById(tabName).style.display = "block";
-    document.getElementById(tabName).classList.add("active");
-    evt.currentTarget.className += " active";
-}}
-</script>
-
 </body>
 </html>"""
 
-def main(
-    mode: str = "report",
-    symbol: str = "UNKNOWN",
-    all_history: dict = None,
-    output_dir: str = "data/output",
-    report_markdown: str = None, 
-    start_date: str = None,
-    **kwargs
-) -> Dict[str, Any]:
+def get_favicon_url(symbol: str) -> str:
     """
-    HTML 生成入口
-    mode="dashboard": 生成含 Tab 的聚合报告 (Refresh 模式用)
-    mode="report": 生成单页报告 (Analyze 模式用)
+    根据 Symbol 获取 Favicon URL
+    逻辑: 
+    1. 从 config 中查找对应的 domain (如 TSLA -> tesla.com)
+    2. 使用 Google S2 Favicon API 生成图标链接
     """
     try:
-        symbol = symbol.upper()
+        domains = config.get("reporting", {}).get("ticker_domains", {})
+    except:
+        domains = {}
         
-        # 模式：聚合仪表盘
-        if mode == "dashboard" and all_history:
-            # 1. 提取初始报告
-            source = all_history.get("source_target", {})
-            init_md = source.get("report", "无初始报告内容")
-            init_html = markdown_to_html(init_md)
+    domain = domains.get(symbol.upper())
+    
+    return f"https://www.google.com/s2/favicons?domain={domain}&sz=128"
+
+def _render_progress(value: float, color_class: str) -> str:
+    pct = min(max(value * 100, 0), 100)
+    color_map = {'tag-green': '#10b981', 'tag-red': '#ef4444', 'tag-blue': '#2563eb', 'tag-orange': '#f59e0b'}
+    bg = color_map.get(color_class, '#cbd5e1')
+    return f'<div class="progress-container"><div class="progress-bar" style="width: {pct}%; background: {bg};"></div></div>'
+
+def _render_monitor_layer(data: Dict) -> str:
+    if not data: return ""
+    
+    targets = data.get("targets", data)
+    
+    # 1. 基础数据
+    spot = targets.get("spot_price", 0)
+    gamma_metrics = targets.get("gamma_metrics", {})
+    micro = gamma_metrics.get("micro_structure", {})
+    wall_type = micro.get("wall_type", "Unknown")
+    ecr = micro.get("raw_metrics", {}).get("ECR", 0)
+    ser = micro.get("raw_metrics", {}).get("SER", 0)
+    
+    # 2. 决策可视化逻辑
+    verdict_title = "交易决策 (VERDICT)"
+    verdict_val = "观望 (NEUTRAL)"
+    verdict_class = "tag-blue"
+    
+    if spot == 0:
+        verdict_title = "数据完整性"
+        verdict_val = "严重缺失 (FAIL)"
+        verdict_class = "tag-red"
+    elif "Brittle" in wall_type:
+        verdict_title = "交易决策"
+        verdict_val = "机会 (OPPORTUNITY)"
+        verdict_class = "tag-green"
+    elif "Rigid" in wall_type:
+        verdict_title = "交易决策"
+        verdict_val = "谨慎 (CAUTION)"
+        verdict_class = "tag-orange"
+
+    # [汉化] 墙体标签
+    wall_label = wall_type.split(' ')[0]
+    if "Rigid" in wall_type: wall_label = "刚性 (RIGID)"
+    elif "Brittle" in wall_type: wall_label = "脆性 (BRITTLE)"
+    
+    wall_tag = "tag-orange" if "Rigid" in wall_type else ("tag-green" if "Brittle" in wall_type else "tag-blue")
+    
+    anchors = targets.get("sentiment_anchors", {})
+    vol_surf = targets.get("vol_surface", {})
+    
+    btn_text = "ABSTAIN" if spot == 0 else ("强力入场 (ENTER)" if "Brittle" in wall_type else "轻仓试探 (PROBE)")
+    
+    return f"""
+    <div class="monitor-grid">
+        <div class="card" style="border-top: 4px solid var(--{verdict_class.split('-')[1]});">
+            <div class="card-header">
+                <span>{verdict_title}</span>
+                <span class="tag {verdict_class}">{verdict_val}</span>
+            </div>
+            <div class="card-body">
+                <div class="metric-row">
+                    <div style="font-size: 13px; color: var(--text-sub);">
+                        { "价格数据缺失" if spot == 0 else wall_type }
+                    </div>
+                </div>
+                <div class="metric-row" style="margin-top: 10px;">
+                     <div class="tag {verdict_class}" style="width: 100%; text-align: center; padding: 6px; font-size: 12px;">
+                        { btn_text }
+                     </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <span>微观物理 (MICRO PHYSICS)</span>
+                <span class="tag {wall_tag}">{wall_label}</span>
+            </div>
+            <div class="card-body">
+                <div class="metric-row">
+                    <div style="flex: 1;">
+                        <div class="metric-label">ECR (钉住风险) <span style="float:right;">{ecr:.2f}</span></div>
+                        {_render_progress(ecr, 'tag-orange' if ecr > 0.5 else 'tag-green')}
+                    </div>
+                </div>
+                <div class="metric-row" style="margin-top: 15px;">
+                    <div style="flex: 1;">
+                        <div class="metric-label">SER (接力能力) <span style="float:right;">{ser:.2f}</span></div>
+                        {_render_progress(ser, 'tag-blue' if ser > 0.5 else 'tag-red')}
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <span>情绪与波动 (SENTIMENT)</span>
+                <span class="tag tag-blue">{vol_surf.get("smile_steepness", "N/A")}</span>
+            </div>
+            <div class="card-body">
+                 <div class="metric-row">
+                    <div>
+                        <div class="metric-label">Max Pain (最大痛点)</div>
+                        <div class="metric-value">${anchors.get("max_pain", 0)}</div>
+                    </div>
+                    <div style="text-align: right;">
+                         <div class="metric-label">P/C Ratio</div>
+                         <div class="metric-value">{anchors.get("put_call_ratio", "N/A")}</div>
+                    </div>
+                </div>
+                <div class="metric-row" style="margin-top: 15px; background: #f8fafc; padding: 10px; border-radius: 6px;">
+                    <div style="width: 100%;">
+                        <div class="metric-label" style="margin-bottom: 4px;">期权墙结构 (Walls)</div>
+                        <div style="display: flex; justify-content: space-between; font-size: 13px; font-weight: 600;">
+                            <span style="color: var(--danger);">Put: ${targets.get("walls", {}).get("put_wall")}</span>
+                            <span style="color: var(--success);">Call: ${targets.get("walls", {}).get("call_wall")}</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    """
+
+def markdown_to_html(text: str) -> str:
+    if not text: return ""
+    lines = text.split('\n')
+    html = []
+    for line in lines:
+        line = line.strip()
+        if line.startswith('### '): html.append(f'<h3>{line[4:]}</h3>'); continue
+        if line.startswith('## '): html.append(f'<h2>{line[3:]}</h2>'); continue
+        if line.startswith('# '): html.append(f'<h1>{line[2:]}</h1>'); continue
+        if line.startswith('- **'): 
+            content = re.sub(r'\*\*(.*?)\*\*', r'<strong>\1</strong>', line[2:])
+            html.append(f'<li>{content}</li>'); continue
+        if line: 
+            content = re.sub(r'\*\*(.*?)\*\*', r'<strong>\1</strong>', line)
+            html.append(f'<p>{content}</p>')
+    return '\n'.join(html)
+
+def main(mode: str = "report", symbol: str = "UNKNOWN", output_dir: str = "data/output", report_markdown: str = None, start_date: str = None, current_data: dict = None, **kwargs) -> Dict[str, Any]:
+    try:
+        symbol = symbol.upper()
+    
+        favicon = get_favicon_url(symbol)
+        
+        # 1. 生成监控层 HTML
+        monitor_html = _render_monitor_layer(current_data)
+        
+        # 2. 生成报告层 HTML
+        report_html = markdown_to_html(report_markdown)
+        
+        # 3. 组装完整页面
+        full_html = HTMLTemplate.get_html(symbol, favicon, monitor_html, report_html)
+        
+        # 4. 保存
+        date_str = start_date if start_date else datetime.now().strftime("%Y-%m-%d")
+        date_clean = date_str.replace("-", "")
+        save_path = Path(output_dir) / symbol / date_clean / f"{symbol}_{date_clean}.html"
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        with open(save_path, 'w', encoding='utf-8') as f:
+            f.write(full_html)
             
-            # 2. 构建 Tabs
-            tabs = []
-            
-            # Tab 1: 初始计划
-            tabs.append({
-                "id": "tab_init", 
-                "title": "📜 初始交易计划", 
-                "content": f'<div class="markdown-body">{init_html}</div>'
-            })
-            
-            # Tab 2...N: 快照
-            # 寻找所有 snapshots_X 并按数字排序
-            snapshot_keys = []
-            for k in all_history.keys():
-                if k.startswith("snapshots_"):
-                    snapshot_keys.append(k)
-            
-            # 安全排序
-            snapshot_keys.sort(key=lambda x: int(x.split("_")[1]) if x.split("_")[1].isdigit() else 0)
-            
-            for key in snapshot_keys:
-                snap = all_history[key]
-                sid = snap.get("snapshot_id", "?")
-                time_str = snap.get("timestamp", "")[11:16] # HH:MM
-                
-                tabs.append({
-                    "id": f"tab_{key}",
-                    "title": f"📸 监控 #{sid} ({time_str})",
-                    "content": format_snapshot_content(snap)
-                })
-            
-            # 3. 生成完整 HTML
-            full_html = get_dashboard_template(symbol, tabs)
-            
-            # 4. 保存
-            date_str = all_history.get("start_date", datetime.now().strftime("%Y-%m-%d"))
-            date_clean = date_str.replace("-", "") 
-            
-            # 路径: data/output/NVDA/20251206/NVDA_20251206.html
-            save_path = Path(output_dir) / symbol / date_clean / f"{symbol}_{date_clean}.html"
-            save_path.parent.mkdir(parents=True, exist_ok=True)
-            
-            with open(save_path, 'w', encoding='utf-8') as f:
-                f.write(full_html)
-                
-            return {
-                "status": "success", 
-                "html_path": str(save_path),
-                "mode": "dashboard"
-            }
-            
-        else:
-            # 初始报告模式
-            if not start_date:
-                start_date = datetime.now().strftime("%Y-%m-%d")
-            
-            # 简单的单页报告 (如果 report_markdown 存在)
-            if report_markdown:
-                html_body = markdown_to_html(report_markdown)
-                # 复用 dashboard template，只放一个 Tab
-                tabs = [{
-                    "id": "tab_init",
-                    "title": "初始分析",
-                    "content": f'<div class="markdown-body">{html_body}</div>'
-                }]
-                full_html = get_dashboard_template(symbol, tabs)
-                
-                date_clean = start_date.replace("-", "")
-                save_path = Path(output_dir) / symbol / date_clean / f"{symbol}_{date_clean}.html"
-                save_path.parent.mkdir(parents=True, exist_ok=True)
-                
-                with open(save_path, 'w', encoding='utf-8') as f:
-                    f.write(full_html)
-                    
-                return {"status": "success", "html_path": str(save_path), "mode": "report"}
-            else:
-                return {"status": "error", "message": "Missing markdown content for report"}
-            
+        return {"status": "success", "html_path": str(save_path)}
+        
     except Exception as e:
         logger.error(f"HTML 生成失败: {e}")
-        
-        logger.error(f"❌ HTML generation failed for {symbol}")
-        logger.error(f"Error: {e}")
-        logger.error(f"Traceback:\n{traceback.format_exc()}")
-        
-        return {
-            "status": "error", 
-            "message": str(e),
-            "traceback": traceback.format_exc()
-        }
+        return {"status": "error", "message": str(e), "traceback": traceback.format_exc()}

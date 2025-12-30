@@ -131,8 +131,6 @@ class AnalyzeCommand(BaseCommand):
         
         market_params = self.env_vars.get('market_params', {})
         
-        self.console.print(f"\n[green]🚀 开始生成 {symbol.upper()} 的动态命令清单[/green]\n")
-        
         try:
             with Progress(
                 SpinnerColumn(),

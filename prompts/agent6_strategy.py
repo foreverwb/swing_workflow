@@ -1,78 +1,109 @@
-
 """
-Agent 6: 策略生成 Prompt (v2.2 - 盈亏比硬约束版)
+Agent 6: Strategy Generation Prompt (v3.5 - English Logic Hardening)
+Changes:
+1. Added 'DIRECTIONAL CONSISTENCY' protocol to prevent Bullish/Bearish mismatch.
+2. Added 'STRUCTURE INTEGRITY' to enforce correct Debit/Credit definitions.
+3. Kept full English prompt for precise reasoning.
 """
 import json
 
 def get_system_prompt(env_vars: dict) -> str:
-    return """你是期权量化交易战术官。
+    return """You are a Quantitative Options Tactical Commander.
 
-**核心原则: Edge First (优势优先)**
-散户的生存法则在于高盈亏比。**所有推荐策略必须追求 Risk/Reward (R/R) > 1:1.8**。
+**OBJECTIVE**:
+Translate quantitative signals into precise, executable trading strategies.
 
-【输入分析】
-1. **验证旗标**:
-   - `weekly_friction_state`: 若为 "Obstructed"，必须在入场条件中加入"等待突破 Weekly Wall"。
-   - `strategy_bias`: 若为 "Debit_Favored" (通常因为 R > 1.8)，必须生成 Debit Spread。
+**🔥 CRITICAL PROTOCOLS (MUST FOLLOW)**:
 
-【策略生成规则】
+1. **BLUEPRINT EXECUTION (Priority #1)**:
+   - Check `swing_strategy`. If a pre-calculated strategy exists (e.g., "Bullish_Debit_Vertical"), **YOU MUST ADOPT IT AS TOP 1**.
+   - Do not invent a new strategy if the blueprint exists. Refine its execution details.
 
-1. **筛选器 (R > 1.8)**:
-   - **首选**: **Debit Spreads** (Vertical/Diagonal)。目标是 risking 1 to make 2。
-   - **次选**: **Ratio Spreads** (如 Front Ratio)。利用无风险套利区间。
-   - **警惕**: **Credit Spreads** (Iron Condor) 通常 R/R 很差 (risking 3 to make 1)。除非 `strategy_bias` 强制要求 Credit (如极低 IV 环境)，否则**降级**此类策略。
+2. **DIRECTIONAL CONSISTENCY (Iron Rule)**:
+   - Your strategy's Delta MUST match the Scenario's direction.
+   - 📈 **Bullish Scenario** (e.g., Grind Up, Breakout):
+     - ✅ ACCEPT: **Bull Put Spread** (Credit), **Bull Call Spread** (Debit), Long Call.
+     - ❌ REJECT: Bear Put Spread, Bear Call Spread.
+   - 📉 **Bearish Scenario** (e.g., Sell-off, Breakdown):
+     - ✅ ACCEPT: **Bear Put Spread** (Debit), **Bear Call Spread** (Credit), Long Put.
+     - ❌ REJECT: Bull Put Spread, Bull Call Spread.
 
-2. **动态参数映射**:
-   - 行权价：基于 `em1_dollar`。
-   - 入场：必须包含 `execution_guidance`。
+3. **STRUCTURE INTEGRITY**:
+   - **Bull Put Spread** is ALWAYS a **Credit** Strategy (Sell High Put / Buy Low Put).
+   - **Bear Put Spread** is ALWAYS a **Debit** Strategy (Buy High Put / Sell Low Put).
+   - Do not confuse Debit/Credit properties.
 
-3. **输出要求**:
-   - 生成 3 个策略。
-   - 如果无法构建 R > 1.8 的策略（例如 IV 极高且 Skew 极差），则输出 "WAIT" 策略，理由为 "无高赔率机会"。
+4. **RISK CONSTRAINT**:
+   - **ALL DEBIT STRATEGIES MUST HAVE R/R > 1.8** (Reward/Risk).
+   - If the blueprint fails this test, suggest "WAIT".
 
-请直接输出 JSON。"""
+5. **MICRO-TACTICS**:
+   - **Rigid Wall**: Requires **Confirmation** entry.
+   - **Brittle Wall**: Allows **Aggressive** entry.
 
+**OUTPUT**:
+- Return JSON with 3 strategies.
+"""
 
-def get_user_prompt(agent5_result: dict, code3_data: dict, agent3_data: dict) -> str:
-    """用户提示词"""
+def get_user_prompt(scenario_result: dict, strategy_calc: dict, agent3_data: dict) -> str:
+    """User Prompt in English"""
     
-    # 防御性解析
     def _parse(data):
         if isinstance(data, str):
             try: return json.loads(data)
             except: return {}
         return data if isinstance(data, dict) else {}
 
-    s5 = _parse(agent5_result)
-    c3 = _parse(code3_data)
+    s5 = _parse(scenario_result)
+    c3 = _parse(strategy_calc) # Was code3_data
+    a3 = _parse(agent3_data)
     
-    # 提取关键信息
-    validation = c3.get("validation", {})
-    exec_guidance = validation.get("execution_guidance", "正常入场")
-    friction = validation.get("weekly_friction_state", "Clear")
+    # Phase 3 Data Extraction
+    swing_strat = c3.get("swing_strategy", None)
     
-    trade_style = c3.get("meta", {}).get("trade_style", "SWING")
-    em1 = c3.get("meta", {}).get("em1", 0)
+    targets = a3.get("targets", {})
+    micro = targets.get("gamma_metrics", {}).get("micro_structure", {})
+    vol_surf = targets.get("vol_surface", {})
     
-    # R/R 数据
-    rr_debit = c3.get("rr", {}).get("bull_call_spread", {})
+    # Scenario Context
+    primary_scenario = s5.get("scenario_classification", {}).get("primary_scenario", "Unknown")
     
-    return f"""请根据最新的量化计算结果，生成适配当前市场状态的期权策略组合。
+    # Construct Context
+    strategy_hint = ""
+    if swing_strat:
+        strategy_hint = f"""
+        【⭐ BLUEPRINT DETECTED】
+        - Name: {swing_strat.get('name')}
+        - Thesis: {swing_strat.get('thesis')}
+        - Direction: {swing_strat.get('direction', 'Check Logic')}
+        - Structure: {swing_strat.get('structure_type')}
+        """
+    else:
+        strategy_hint = "No Blueprint. Build strategy manually."
 
-## 核心指令
-1. **交易风格**: {trade_style}
-2. **EM1$基准**: ${em1:.2f}
-3. **周度摩擦状态**: {friction} ({exec_guidance})
-4. **Debit 策略 R/R**: {rr_debit.get('ratio_str', 'N/A')} (是否满足 Edge: {rr_debit.get('meets_edge', False)})
+    micro_hint = f"Wall Type: {micro.get('wall_type', 'Unknown')}, Breakout Difficulty: {micro.get('breakout_difficulty', 'Unknown')}"
+    vol_hint = f"Vol Smile: {vol_surf.get('smile_steepness', 'Unknown')}"
 
-## 剧本输入
-{json.dumps(s5.get('scenario_classification', {}), ensure_ascii=False)}
+    return f"""Generate tactical options strategies.
 
-## 量化参数 (Code 3)
-```json
-{json.dumps(c3, ensure_ascii=False, indent=2)}
-    ## 任务
-    生成 3 个策略（优先 Debit/Ratio，满足 R>1.8）。 若 validation.is_vetoed 为 True，仅输出观望建议。
+    ## 1. MARKET CONTEXT
+    - **Primary Scenario**: {primary_scenario}
+    - **Micro Environment**: {micro_hint}
+    - **Pricing Environment**: {vol_hint}
+    {strategy_hint}
 
-    请直接输出 JSON。
+    ## 2. QUANT METRICS (Calculator)
+    ```json
+    {json.dumps(c3, ensure_ascii=False, indent=2)}
+    ```
+
+    ## 3. SCENARIOS (Agent 5)
+    {json.dumps(s5.get('scenario_classification', {}), ensure_ascii=False)}
+
+    ## INSTRUCTIONS
+    1. **Top 1 Strategy**: Must follow the BLUEPRINT.
+    2. **Sanity Check**: If Scenario is "{primary_scenario}", ensure Top 1 Strategy direction is valid. (e.g. Do not use Bear Put for Bullish scenario).
+    3. **Top 2 & 3**: Provide hedges or alternatives.
+
+    Return JSON.
     """

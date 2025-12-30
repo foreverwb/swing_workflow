@@ -1,10 +1,10 @@
 """
-Agent 6: 策略生成 Schema (v2.1)
+Agent 6: 策略生成 Schema (v3.0 - Phase 3 Enhanced)
 
 变更:
-1. execution_plan 中 entry_timing 设为 required
+1. 新增 'source_blueprint' 字段，追踪策略来源 (Code3 vs LLM)
+2. 强化 execution_plan 对微观战术的描述
 """
-
 
 def get_schema() -> dict:
     """获取 Agent 6 输出 Schema"""
@@ -51,6 +51,13 @@ def get_schema() -> dict:
                     ],
                     "properties": {
                         "strategy_name": {"type": "string"},
+                        
+                        # [新增] 蓝图来源追踪
+                        "source_blueprint": {
+                            "type": "string",
+                            "description": "如果基于Code3蓝图，此处填写蓝图名称 (如 Bullish_Debit_Vertical)，否则为 Manual"
+                        },
+
                         "strategy_type": {
                             "type": "string",
                             "enum": ["directional", "volatility", "income", "hedge", "WAIT"]
@@ -76,14 +83,11 @@ def get_schema() -> dict:
                             }
                         },
                         
-                        # ------------------------------------------
-                        # 执行计划 (变更)
-                        # ------------------------------------------
                         "execution_plan": {
                             "type": "object",
                             "required": [
                                 "entry_trigger", 
-                                "entry_timing",  # ✅ 新增：必须输出，承载 execution_guidance
+                                "entry_timing",
                                 "holding_period", 
                                 "exit_plan"
                             ],
@@ -91,7 +95,7 @@ def get_schema() -> dict:
                                 "entry_trigger": {"type": "string"},
                                 "entry_timing": {
                                     "type": "string",
-                                    "description": "入场时机描述，必须包含上游的执行建议 (如等待尾盘)"
+                                    "description": "基于Rigid/Brittle墙体属性的入场时机 (Confirmation vs Aggressive)"
                                 },
                                 "holding_period": {"type": "string"},
                                 "exit_plan": {

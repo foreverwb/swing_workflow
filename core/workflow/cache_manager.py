@@ -166,6 +166,7 @@ class CacheManager:
                 "iv30": market_params.get("iv30"),
                 "hv20": market_params.get("hv20"),
                 "vrp": market_params.get("iv30", 0) / market_params.get("hv20", 1) if market_params.get("hv20", 0) > 0 else 0,
+                "iv_path": market_params.get('iv_path'),
                 "updated_at": datetime.now().isoformat()
             }
             
@@ -175,7 +176,7 @@ class CacheManager:
                 "dyn_dte_mid": dyn_params.get("dyn_dte_mid"),
                 "dyn_dte_long_backup": dyn_params.get("dyn_dte_long_backup"),
                 "dyn_window": dyn_params.get("dyn_window"),
-                # "scenario": dyn_params.get("scenario"),
+                "scenario": dyn_params.get("scenario"),
                 "updated_at": datetime.now().isoformat()
             }
             
@@ -742,6 +743,7 @@ class CacheManager:
                 "iv30": market_params.get("iv30"),
                 "hv20": market_params.get("hv20"),
                 "vrp": market_params.get("iv30", 0) / market_params.get("hv20", 1) if market_params.get("hv20", 0) > 0 else 0,
+                "iv_path": market_params.get("iv_path"),
                 "updated_at": datetime.now().isoformat()
             },
             

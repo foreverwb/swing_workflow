@@ -362,3 +362,30 @@ beta:
   
   # 默认值（当无法确定时使用）
   default_beta: 1.0
+
+reporting:
+  ticker_domains:
+    TSLA: "tesla.com"
+    NVDA: "nvidia.com"
+    META: "meta.com"
+    COIN: "coinbase.com"
+    PLTR: "palantir.com"
+    AAPL: "apple.com"
+    AVGO: "broadcom.com"
+    NFLX: "netflix.com"
+    BABA: "alibaba.com"
+    AMD: "amd.com"
+    AMZN: "amazon.com"
+    MSFT: "microsoft.com"
+    GOOG: "google.com"
+    APP: "applovin.com"
+    ORCL: "oracle.com"
+    TSM: "tsmc.com"
+    LLY: "lilly.com"
+    INTC: "intel.com"
+    CRWD: "crowdstrike.com"
+    CRDO: "credosemi.com"
+    CLS: "celestica.com"
+    VST: "vistracorp.com"
+    DELL: "dell.com"
+    SNPS: "synopsys.com"

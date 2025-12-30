@@ -1,10 +1,10 @@
 """
-Agent 5: 场景分析 Schema (v2.2)
+Agent 5: 场景分析 Schema (v3.0 - Phase 3 Enhanced)
 
 变更:
-1. 移除 validation_summary 中的 noise_level
+1. 新增 'physics_assessment' 字段，用于固化微观物理判断 (Rigid/Brittle)
+2. 兼容英文输出
 """
-
 
 def get_schema() -> dict:
     """返回 Agent 5 的 JSON Schema"""
@@ -12,11 +12,11 @@ def get_schema() -> dict:
         "type": "object",
         "required": [
             "gamma_regime",
+            "physics_assessment", # [新增] 物理属性评估
             "scoring",
             "scenario_classification",
             "scenarios",
-            "validation_summary",
-            "entry_threshold_check"
+            "validation_summary"
         ],
         "properties": {
             "gamma_regime": {
@@ -29,6 +29,29 @@ def get_schema() -> dict:
                     "regime_note": {"type": "string"}
                 }
             },
+            
+            # [新增] Phase 3 核心：微观物理与共振评估
+            "physics_assessment": {
+                "type": "object",
+                "required": ["wall_nature", "breakout_probability", "resonance_check"],
+                "properties": {
+                    "wall_nature": {
+                        "type": "string", 
+                        "enum": ["Rigid", "Brittle", "Elastic", "Unknown"],
+                        "description": "墙体物理属性 (Rigid=Range, Brittle=Breakout)"
+                    },
+                    "breakout_probability": {
+                        "type": "string",
+                        "enum": ["High", "Medium", "Low"]
+                    },
+                    "resonance_check": {
+                        "type": "string",
+                        "enum": ["Resonance", "Friction", "Neutral"],
+                        "description": "周度与月度结构的共振状态"
+                    }
+                }
+            },
+
             "scoring": {
                 "type": "object",
                 "properties": {
@@ -72,7 +95,6 @@ def get_schema() -> dict:
                 "properties": {
                     "has_fake_breakout_risk": {"type": "boolean"},
                     "has_vol_suppression": {"type": "boolean"},
-                    # 移除了 noise_level
                     "overall_confidence_adjustment": {"type": "number"},
                     "warnings": {
                         "type": "array",
@@ -80,6 +102,7 @@ def get_schema() -> dict:
                     }
                 }
             },
+            # 兼容旧字段
             "entry_threshold_check": {"type": "string"},
             "entry_rationale": {"type": "string"},
             "key_levels": {"type": "object"},
