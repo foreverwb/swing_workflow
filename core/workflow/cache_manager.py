@@ -57,7 +57,7 @@ class CacheManager:
         """
         safe_symbol = self._sanitize_symbol(symbol)
         
-        # 场景 1：传入的 start_date 实际上是一个文件名 (e.g., "INTC_20260102.json")
+        # 场景 1：传入的 start_date 实际上是一个文件名 (e.g., "INTC_o_20260102.json")
         if start_date and str(start_date).lower().endswith('.json'):
             if not cache_file:
                 cache_file = start_date
@@ -95,7 +95,7 @@ class CacheManager:
         if not date_dir.exists():
             date_dir.mkdir(parents=True, exist_ok=True)
             
-        return date_dir / f"{safe_symbol}_{start_date}.json", start_date
+        return date_dir / f"{safe_symbol}_o_{start_date}.json", start_date
 
     def _save_cache(self, cache_file: Path, data: Dict[str, Any]):
         """通用保存方法，包含原子写入保障"""
@@ -143,7 +143,7 @@ class CacheManager:
             
             # 递归查找或按日期目录查找
             # 简单起见，这里假设按日期目录结构，遍历所有日期目录下的文件
-            analysis_files = sorted(symbol_dir.glob(f"**/{safe_symbol}_*.json"), reverse=True)
+            analysis_files = sorted(symbol_dir.glob(f"**/{safe_symbol}_o_*.json"), reverse=True)
             if not analysis_files:
                 return None
             

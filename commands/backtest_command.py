@@ -39,8 +39,8 @@ class BacktestCommand(BaseCommand):
             sys.exit(1)
             
         # 1. 加载历史分析
-        # 路径格式: data/output/{SYMBOL}/{DATE}/{SYMBOL}_{DATE}.json
-        cache_file = Path(f"data/output/{symbol.upper()}/{test_date}/{symbol.upper()}_{test_date}.json")
+        # 路径格式: data/output/{SYMBOL}/{DATE}/{SYMBOL}_o_{DATE}.json
+        cache_file = Path(f"data/output/{symbol.upper()}/{test_date}/{symbol.upper()}_o_{test_date}.json")
         
         if not cache_file.exists():
             self.print_error(f"未找到 {test_date} 的历史分析文件: {cache_file}")

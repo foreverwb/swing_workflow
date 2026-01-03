@@ -166,7 +166,7 @@ class AnalysisPipeline:
         
         start_date = None
         if self.cache_file:
-            match = re.match(r'(\w+)_(\d{8})\.json', self.cache_file)
+            match = re.match(r'(\w+)_o_(\d{8})\.json', self.cache_file)
             if match: start_date = match.group(2)
         
         result = self.agent_executor.execute_code_node(

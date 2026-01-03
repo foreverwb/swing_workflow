@@ -52,9 +52,9 @@ def validate_cache_file(cache_file: str, symbol: str) -> tuple[bool, str, dict]:
     Args:
         cache_file: 缓存文件名或路径
             支持格式：
-            - 文件名：NVDA_20251201.json
-            - 相对路径：./data/output/NVDA/20251201/NVDA_20251201.json
-            - 绝对路径：/path/to/NVDA_20251201.json
+            - 文件名：NVDA_o_20251201.json
+            - 相对路径：./data/output/NVDA/20251201/NVDA_o_20251201.json
+            - 绝对路径：/path/to/NVDA_o_20251201.json
         symbol: 股票代码
         
     Returns:
@@ -65,9 +65,9 @@ def validate_cache_file(cache_file: str, symbol: str) -> tuple[bool, str, dict]:
     filename = cache_path.name
     
     # 1. 解析文件名
-    match = re.match(r'(\w+)_(\d{8})\.json', filename)
+    match = re.match(r'(\w+)_o_(\d{8})\.json', filename)
     if not match:
-        return False, f"缓存文件名格式错误，应为 {{SYMBOL}}_{{YYYYMMDD}}.json", {}
+        return False, f"缓存文件名格式错误，应为 {{SYMBOL}}_o_{{YYYYMMDD}}.json", {}
     
     file_symbol = match.group(1)
     file_date = match.group(2)

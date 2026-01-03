@@ -96,12 +96,13 @@ class HTMLTemplate:
     @classmethod
     def get_dashboard_html(cls, symbol, favicon, latest_html, analysis_html, history_html):
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        date_dm = datetime.now().strftime("%d-%m")
         return f"""
         <!DOCTYPE html>
         <html lang="zh-CN">
         <head>
             <meta charset="UTF-8">
-            <title>{symbol} 量化仪表盘</title>
+            <title>{date_dm}-{symbol}-Report</title>
             <link rel="icon" href="{favicon}">
             <style>{cls.CSS}</style>
             <script>{cls.JS}</script>

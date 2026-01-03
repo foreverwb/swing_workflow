@@ -476,7 +476,7 @@ class AnalyzeCommand(BaseCommand):
         input_dir = Path("data/input")
         input_dir.mkdir(parents=True, exist_ok=True)
         
-        filename = f"{symbol.lower()}_{datetime.now().strftime('%Y%m%d')}.json"
+        filename = f"{symbol.lower()}_i_{datetime.now().strftime('%Y%m%d')}.json"
         filepath = input_dir / filename
         
         # 从 schema 自动生成 spec 结构
