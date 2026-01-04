@@ -23,7 +23,12 @@ from core.workflow import CacheManager
 from code_nodes.pre_calculator import MarketStateCalculator
 from code_nodes.code0_cmdlist import CommandListGenerator
 from utils.console_printer import print_error_summary
-
+from code_nodes.field_calculator import main as calculator_main
+from code_nodes.code_input_calc import InputFileCalculator
+from core.workflow.agent_executor import AgentExecutor
+from core.workflow.pipeline import AnalysisPipeline
+from core.error_handler import ErrorHandler
+from utils.validators import resolve_input_file_path
 
 class AnalyzeCommand(BaseCommand):
     """Analyze 命令处理器（全功能版）"""
@@ -260,11 +265,6 @@ class AnalyzeCommand(BaseCommand):
         market_params: Dict = None
     ) -> Dict[str, Any]:
         """执行基于文件的直接分析 (建立基准)"""
-        from code_nodes.field_calculator import main as calculator_main
-        from code_nodes.code_input_calc import InputFileCalculator
-        from core.workflow.agent_executor import AgentExecutor
-        from core.workflow.pipeline import AnalysisPipeline
-        from core.error_handler import ErrorHandler
         
         self.console.print(Panel.fit(
             f"[bold green]📊 初始分析: {symbol.upper()}[/bold green]\n"
@@ -274,9 +274,12 @@ class AnalyzeCommand(BaseCommand):
         
         try:
             # 1. 加载输入文件
-            input_path = Path(input_file)
-            if not input_path.exists():
-                raise FileNotFoundError(f"文件不存在: {input_file}")
+            input_path, error_msg = resolve_input_file_path(input_file, symbol)
+            if not input_path:
+                self.print_error(error_msg)
+                sys.exit(1)
+            
+            self.console.print(f"[dim]   📄 输入文件: {input_path}[/dim]")
             
             # [Fix] 使用 InputFileCalculator 预计算 micro_structure (ECR/SER/TSR)
             input_calculator = InputFileCalculator(str(input_path))

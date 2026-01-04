@@ -170,6 +170,14 @@ class RefreshMode(FullAnalysisMode):
         logger.info(f"📄 [Refresh] 从 JSON 文件加载: {input_path.name}")
         
         try:
+            # 确保是 Path 对象
+            if isinstance(input_path, str):
+                input_path = Path(input_path)
+            
+            # 验证文件存在
+            if not input_path.exists():
+                raise FileNotFoundError(f"文件不存在: {input_path}")
+            
             # 1. 使用 InputFileCalculator 预计算 micro_structure
             input_calculator = InputFileCalculator(str(input_path))
             input_calculator.load()

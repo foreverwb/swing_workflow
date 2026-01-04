@@ -5,7 +5,7 @@
 
 import re
 import json
-from typing import Tuple
+from typing import Tuple, Optional
 from datetime import datetime
 from pathlib import Path
 
@@ -120,3 +120,80 @@ def validate_cache_file(cache_file: str, symbol: str) -> tuple[bool, str, dict]:
     }
     
     return True, "", cache_info
+
+
+def resolve_input_file_path(input_arg: str, symbol: str = None) -> Tuple[Optional[Path], str]:
+    """
+    智能解析输入文件路径
+    
+    支持的输入格式：
+    1. 完整路径: data/input/INTC_i_20250103.json
+    2. 相对路径: INTC_i_20250103.json
+    3. 无后缀: INTC_i_20250103
+    4. 模糊匹配: symbol_i_datetime (自动查找最新)
+    
+    Args:
+        input_arg: 用户输入的文件路径/名称
+        symbol: 股票代码（用于模糊匹配）
+        
+    Returns:
+        (resolved_path, error_message)
+    """
+    from loguru import logger
+    
+    # 1. 清理输入
+    input_str = str(input_arg).strip()
+    
+    # 2. 如果是完整路径且存在，直接返回
+    input_path = Path(input_str)
+    if input_path.exists() and input_path.is_file():
+        logger.debug(f"✅ 使用完整路径: {input_path}")
+        return input_path, None
+    
+    # 3. 尝试添加 data/input/ 前缀
+    if not input_str.startswith("data/input/"):
+        input_str_with_prefix = f"data/input/{input_str}"
+        
+        # 3.1 尝试直接路径
+        candidate = Path(input_str_with_prefix)
+        if candidate.exists() and candidate.is_file():
+            logger.debug(f"✅ 补全路径: {candidate}")
+            return candidate, None
+        
+        # 3.2 尝试添加 .json 后缀
+        if not input_str.endswith('.json'):
+            candidate_with_ext = Path(f"{input_str_with_prefix}.json")
+            if candidate_with_ext.exists() and candidate_with_ext.is_file():
+                logger.debug(f"✅ 补全路径+后缀: {candidate_with_ext}")
+                return candidate_with_ext, None
+    
+    # 4. 如果有 symbol，尝试模糊匹配（查找最新文件）
+    if symbol:
+        input_dir = Path("data/input")
+        if input_dir.exists():
+            # 构建匹配模式
+            # 支持: symbol_i_* 或 *_i_* 格式
+            pattern = f"{symbol.upper()}_i_*.json"
+            
+            matching_files = sorted(
+                input_dir.glob(pattern),
+                key=lambda p: p.stat().st_mtime,
+                reverse=True
+            )
+            
+            if matching_files:
+                latest_file = matching_files[0]
+                logger.info(f"📂 自动匹配到最新文件: {latest_file.name}")
+                return latest_file, None
+    
+    # 5. 所有尝试失败
+    error_msg = f"未找到输入文件: {input_arg}"
+    
+    # 提供可能的文件列表
+    input_dir = Path("data/input")
+    if input_dir.exists():
+        available = [f.name for f in input_dir.glob("*.json")][:5]
+        if available:
+            error_msg += f"\n💡 data/input/ 目录下的文件:\n   - " + "\n   - ".join(available)
+    
+    return None, error_msg
