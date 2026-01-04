@@ -2,17 +2,14 @@
 Refresh Command - 刷新快照命令
 盘中数据更新，基于已有缓存进行增量分析
 """
-
 import sys
 from pathlib import Path
 from typing import Dict, Any
-
 from rich.console import Console
 from loguru import logger
-
 from commands.base import BaseCommand
 from core.workflow import CacheManager
-
+from utils.validators import resolve_input_file_path
 
 class RefreshCommand(BaseCommand):
     """Refresh 命令处理器 - 盘中数据刷新"""
@@ -118,9 +115,15 @@ class RefreshCommand(BaseCommand):
         
         try:
             if input_file:
-                # 文件模式: 从 JSON 读取数据
-                self.console.print(f"[dim]   输入文件: {input_file}[/dim]")
-                data_source = Path(input_file)
+                resolved_path, error_msg = resolve_input_file_path(input_file, symbol)
+            
+                if not resolved_path:
+                    self.print_error(error_msg)
+                    sys.exit(1)
+                
+                self.console.print(f"[dim]   输入文件: {resolved_path}[/dim]")
+                # [Fix] 使用解析后的完整路径，而不是原始的 input_file
+                data_source = resolved_path
                 mode = 'refresh_file'
             else:
                 # 图片模式: 从文件夹扫描

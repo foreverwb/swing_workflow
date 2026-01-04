@@ -57,45 +57,96 @@ class CacheManager:
         """
         safe_symbol = self._sanitize_symbol(symbol)
         
-        # 场景 1：传入的 start_date 实际上是一个文件名 (e.g., "INTC_o_20260102.json")
-        if start_date and str(start_date).lower().endswith('.json'):
-            if not cache_file:
-                cache_file = start_date
-            # 尝试从文件名提取真正的日期
-            match = re.search(r'(\d{8})', str(cache_file))
-            start_date = match.group(1) if match else datetime.now().strftime("%Y%m%d")
-
-        # 场景 2：明确提供了 cache_file
-        if cache_file:
-            match = re.search(r'(\d{8})', str(cache_file))
-            if match:
-                file_date = match.group(1)
-                # 优先信任文件名中的日期
-                if not start_date or start_date != file_date:
-                    start_date = file_date
-            
-            if not start_date:
-                start_date = datetime.now().strftime("%Y%m%d")
-                
-            symbol_dir = self.output_dir / safe_symbol
-            date_dir = symbol_dir / start_date
-            
-            if not date_dir.exists():
-                date_dir.mkdir(parents=True, exist_ok=True)
-                
-            return date_dir / cache_file, start_date
-
-        # 场景 3：标准调用，只有 symbol 和 (可选) start_date
-        if not start_date:
-            start_date = datetime.now().strftime("%Y%m%d")
-            
-        symbol_dir = self.output_dir / safe_symbol
-        date_dir = symbol_dir / start_date
+        # === 步骤 1: 确定最终的 cache_file 和 start_date ===
         
+        final_cache_file = None
+        final_start_date = None
+        
+        # 1.1 处理 cache_file 参数
+        if cache_file:
+            # 清理并标准化文件名
+            cache_file_str = str(cache_file).strip()
+            
+            # 如果没有 .json 后缀，自动添加
+            if not cache_file_str.endswith('.json'):
+                cache_file_str = f"{cache_file_str}.json"
+            
+            final_cache_file = cache_file_str
+            
+            # 从文件名中提取日期（支持多种格式）
+            # 格式1: SYMBOL_o_YYYYMMDD.json
+            # 格式2: SYMBOL_YYYYMMDD.json
+            # 格式3: 任何包含 YYYYMMDD 的文件名
+            
+            # 优先匹配标准格式
+            match = re.search(r'_o_(\d{8})\.json$', cache_file_str)
+            if not match:
+                # 回退：匹配任何 8 位数字
+                match = re.search(r'(\d{8})', cache_file_str)
+            
+            if match:
+                extracted_date = match.group(1)
+                # 验证是否为有效日期格式
+                try:
+                    datetime.strptime(extracted_date, "%Y%m%d")
+                    final_start_date = extracted_date
+                except ValueError:
+                    logger.warning(f"从文件名提取的日期无效: {extracted_date}")
+        
+        # 1.2 处理 start_date 参数
+        if start_date:
+            start_date_str = str(start_date).strip()
+            
+            # 场景A: start_date 实际上是一个文件名
+            if start_date_str.endswith('.json') or re.search(r'[_\.]', start_date_str):
+                if not final_cache_file:
+                    # 将 start_date 当作 cache_file 处理
+                    final_cache_file = start_date_str if start_date_str.endswith('.json') else f"{start_date_str}.json"
+                    
+                    # 提取日期
+                    match = re.search(r'(\d{8})', final_cache_file)
+                    if match:
+                        extracted_date = match.group(1)
+                        try:
+                            datetime.strptime(extracted_date, "%Y%m%d")
+                            final_start_date = extracted_date
+                        except ValueError:
+                            pass
+            else:
+                # 场景B: start_date 是纯日期字符串
+                # 验证并使用
+                if re.match(r'^\d{8}$', start_date_str):
+                    try:
+                        datetime.strptime(start_date_str, "%Y%m%d")
+                        final_start_date = start_date_str
+                    except ValueError:
+                        logger.warning(f"start_date 不是有效日期: {start_date_str}")
+        
+        # 1.3 兜底：如果仍然没有日期，使用当前日期
+        if not final_start_date:
+            final_start_date = datetime.now().strftime("%Y%m%d")
+            logger.debug(f"使用当前日期: {final_start_date}")
+        
+        # 1.4 兜底：如果没有文件名，生成标准文件名
+        if not final_cache_file:
+            final_cache_file = f"{safe_symbol}_o_{final_start_date}.json"
+            logger.debug(f"生成标准文件名: {final_cache_file}")
+        
+        # === 步骤 2: 构建最终路径 ===
+        
+        symbol_dir = self.output_dir / safe_symbol
+        date_dir = symbol_dir / final_start_date
+        
+        # 确保目录存在
         if not date_dir.exists():
             date_dir.mkdir(parents=True, exist_ok=True)
-            
-        return date_dir / f"{safe_symbol}_o_{start_date}.json", start_date
+            logger.debug(f"创建目录: {date_dir}")
+        
+        cache_path = date_dir / final_cache_file
+        
+        logger.debug(f"解析结果: cache_file={final_cache_file}, start_date={final_start_date}, path={cache_path}")
+        
+        return cache_path, final_start_date
 
     def _save_cache(self, cache_file: Path, data: Dict[str, Any]):
         """通用保存方法，包含原子写入保障"""
@@ -179,6 +230,13 @@ class CacheManager:
         
         # [Fix] 使用智能路径解析
         cache_path, valid_start_date = self._resolve_file_args(symbol, start_date, cache_file)
+        
+        # 🔧 验证日期格式
+        if not re.match(r'^\d{8}$', valid_start_date):
+            logger.error(f"日期格式错误: {valid_start_date}，使用当前日期")
+            valid_start_date = datetime.now().strftime("%Y%m%d")
+            cache_path, valid_start_date = self._resolve_file_args(symbol, valid_start_date, None)
+        
         symbol = symbol.upper()
         
         # 增量更新或新建
@@ -275,6 +333,14 @@ class CacheManager:
             return None
         
         cache_path, valid_start_date = self._resolve_file_args(symbol, start_date, cache_file)
+        
+        # 🔧 验证日期格式（防御性编程）
+        if not re.match(r'^\d{8}$', valid_start_date):
+            logger.error(f"日期格式错误: {valid_start_date}，使用当前日期")
+            valid_start_date = datetime.now().strftime("%Y%m%d")
+            # 重新生成路径
+            cache_path, valid_start_date = self._resolve_file_args(symbol, valid_start_date, None)
+        
         symbol = symbol.upper()
         
         if cache_path.exists():
@@ -396,6 +462,7 @@ class CacheManager:
                 "scenario": dyn_params.get("scenario"),
                 "updated_at": datetime.now().isoformat()
             },
+            "cluster_assessment": {},  # [Fix] 添加空的 cluster_assessment 保持格式一致
             "source_target": {},
             "last_updated": datetime.now().isoformat()
         }
@@ -493,7 +560,17 @@ class CacheManager:
         is_initial: bool = False,
         cache_file_name: str = None
     ) -> Dict:
-        """保存希腊值快照（支持多次 refresh）"""
+        """
+        保存希腊值快照（支持多次 refresh）
+        
+        输出格式:
+        {
+            "market_params": {},
+            "dyn_params": {},
+            "cluster_assessment": {},
+            "source_target": {}
+        }
+        """
         if not symbol or str(symbol).upper() == "UNKNOWN":
             logger.error(f"无效的 symbol: '{symbol}'，跳过保存快照")
             return {"status": "error", "message": f"无效的 symbol: {symbol}"}
@@ -511,8 +588,31 @@ class CacheManager:
             snapshots_data = {
                 "symbol": symbol,
                 "start_date": datetime.now().strftime("%Y-%m-%d"),
+                "market_params": {},
+                "dyn_params": {},
+                "cluster_assessment": {},
                 "source_target": None
             }
+        
+        # [Fix] 更新 market_params (如果 data 中有)
+        if data.get("market_params"):
+            # 增量更新，保留已有字段
+            existing_market = snapshots_data.get("market_params", {})
+            existing_market.update(data["market_params"])
+            snapshots_data["market_params"] = existing_market
+            logger.info(f"✅ market_params 已更新到缓存")
+        
+        # [Fix] 更新 dyn_params (如果 data 中有)
+        if data.get("dyn_params"):
+            existing_dyn = snapshots_data.get("dyn_params", {})
+            existing_dyn.update(data["dyn_params"])
+            snapshots_data["dyn_params"] = existing_dyn
+            logger.info(f"✅ dyn_params 已更新到缓存")
+        
+        # [Fix] 更新 cluster_assessment (如果 data 中有)
+        if data.get("cluster_assessment"):
+            snapshots_data["cluster_assessment"] = data["cluster_assessment"]
+            logger.info(f"✅ cluster_assessment (tier={data['cluster_assessment'].get('tier')}) 已写入缓存")
         
         # 计算 snapshot_id
         if is_initial:
@@ -538,14 +638,32 @@ class CacheManager:
             snapshots_data[next_snapshot_key] = snapshot_record
             logger.info(f"✅ 保存第 {snapshot_id} 次 refresh 快照")
         
-        self._save_cache(cache_path, snapshots_data)
+        # [Fix] 确保字段顺序符合用户要求
+        ordered_data = {
+            "symbol": snapshots_data.get("symbol", symbol),
+            "start_date": snapshots_data.get("start_date", datetime.now().strftime("%Y-%m-%d")),
+            "created_at": snapshots_data.get("created_at", datetime.now().isoformat()),
+            "market_params": snapshots_data.get("market_params", {}),
+            "dyn_params": snapshots_data.get("dyn_params", {}),
+            "cluster_assessment": snapshots_data.get("cluster_assessment", {}),
+            "source_target": snapshots_data.get("source_target"),
+            "last_updated": datetime.now().isoformat()
+        }
+        
+        # 保留其他已有的 snapshots_N 字段
+        for key, value in snapshots_data.items():
+            if key.startswith("snapshots_"):
+                ordered_data[key] = value
+        
+        self._save_cache(cache_path, ordered_data)
         logger.success(f"💾 快照已保存: {cache_path}")
         
         return {
             "status": "success",
+            "file_path": str(cache_path),
             "snapshot_file": str(cache_path),
             "snapshot": snapshot_record,
-            "total_snapshots": sum(1 for k in snapshots_data.keys() if k.startswith("snapshots_"))
+            "total_snapshots": sum(1 for k in ordered_data.keys() if k.startswith("snapshots_"))
         }
 
     def load_latest_greeks_snapshot(self, symbol: str) -> Optional[Dict]:

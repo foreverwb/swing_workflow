@@ -23,7 +23,12 @@ from core.workflow import CacheManager
 from code_nodes.pre_calculator import MarketStateCalculator
 from code_nodes.code0_cmdlist import CommandListGenerator
 from utils.console_printer import print_error_summary
-
+from code_nodes.field_calculator import main as calculator_main
+from code_nodes.code_input_calc import InputFileCalculator
+from core.workflow.agent_executor import AgentExecutor
+from core.workflow.pipeline import AnalysisPipeline
+from core.error_handler import ErrorHandler
+from utils.validators import resolve_input_file_path
 
 class AnalyzeCommand(BaseCommand):
     """Analyze 命令处理器（全功能版）"""
@@ -260,11 +265,6 @@ class AnalyzeCommand(BaseCommand):
         market_params: Dict = None
     ) -> Dict[str, Any]:
         """执行基于文件的直接分析 (建立基准)"""
-        from code_nodes.field_calculator import main as calculator_main
-        from code_nodes.code_input_calc import InputFileCalculator
-        from core.workflow.agent_executor import AgentExecutor
-        from core.workflow.pipeline import AnalysisPipeline
-        from core.error_handler import ErrorHandler
         
         self.console.print(Panel.fit(
             f"[bold green]📊 初始分析: {symbol.upper()}[/bold green]\n"
@@ -274,14 +274,22 @@ class AnalyzeCommand(BaseCommand):
         
         try:
             # 1. 加载输入文件
-            input_path = Path(input_file)
-            if not input_path.exists():
-                raise FileNotFoundError(f"文件不存在: {input_file}")
+            input_path, error_msg = resolve_input_file_path(input_file, symbol)
+            if not input_path:
+                self.print_error(error_msg)
+                sys.exit(1)
             
-            # [Fix] 使用 InputFileCalculator 预计算 micro_structure (ECR/SER/TSR)
+            self.console.print(f"[dim]   📄 输入文件: {input_path}[/dim]")
+            
+            # [Fix] 使用 InputFileCalculator 预计算 cluster_strength_ratio 和 micro_structure (ECR/SER/TSR)
             input_calculator = InputFileCalculator(str(input_path))
             input_calculator.load()
             calc_result = input_calculator.calculate()
+            
+            # [Fix] 调用 write_back 将 cluster_strength_ratio 写回输入文件
+            # 这样 field_calculator 可以读取到已计算的值
+            input_calculator.write_back()
+            logger.info(f"✅ cluster_strength_ratio 已写回输入文件: {input_path}")
             
             # 获取计算后的数据（包含 micro_structure）
             raw_data = input_calculator.data
@@ -294,6 +302,14 @@ class AnalyzeCommand(BaseCommand):
                 targets["gamma_metrics"] = {}
             if calc_result.get("micro_structure"):
                 targets["gamma_metrics"]["micro_structure"] = calc_result["micro_structure"]
+            
+            # [Fix] 注入 cluster_strength_ratio 到 targets.gamma_metrics
+            if calc_result.get("cluster_strength_ratio") is not None:
+                targets["gamma_metrics"]["cluster_strength_ratio"] = calc_result["cluster_strength_ratio"]
+                logger.info(f"✅ cluster_strength_ratio={calc_result['cluster_strength_ratio']} 已注入到 targets")
+            
+            # [Fix] 获取 cluster_assessment 数据用于后续写入缓存
+            cluster_assessment = input_calculator.get_cluster_assessment()
             
             if not targets:
                 raise ValueError("输入文件无效: 缺少 spec.targets")
@@ -311,6 +327,9 @@ class AnalyzeCommand(BaseCommand):
             self.console.print(f"[dim]   确立基准参数: VIX={current_market_params.get('vix')}[/dim]")
             
             # 3. 执行计算 (Field Calculator)
+            self.console.print(f"\n[yellow]🔧 调用 FieldCalculator 计算衍生字段...[/yellow]")
+            logger.info("🔧 [Analyze] 调用 field_calculator.main()")
+            
             calc_input = {"result": {"targets": targets}}
             
             # 模拟 Event Data (Analyze 模式可能需要从外部获取，此处留空)
@@ -323,6 +342,8 @@ class AnalyzeCommand(BaseCommand):
                 event_data=event_data
             )
             
+            logger.info(f"🔧 [Analyze] field_calculator 返回: data_status={calculated_result.get('data_status')}")
+            
             if calculated_result.get("data_status") != "ready":
                  val = calculated_result.get("validation", {})
                  raise ValueError(f"计算失败: {val.get('missing_fields')}")
@@ -332,6 +353,18 @@ class AnalyzeCommand(BaseCommand):
             
             # 注入 Market Params 以便缓存记录
             calculated_result["market_params"] = current_market_params
+            
+            # [Fix] 注入 cluster_assessment 到 calculated_result
+            if cluster_assessment:
+                from dataclasses import asdict
+                calculated_result["cluster_assessment"] = {
+                    "tier": cluster_assessment.tier,
+                    "score": cluster_assessment.score,
+                    "avg_top1": cluster_assessment.avg_top1,
+                    "avg_enp": cluster_assessment.avg_enp,
+                    "panels": [asdict(pm) for pm in cluster_assessment.panels],
+                }
+                logger.info(f"✅ cluster_assessment (tier={cluster_assessment.tier}) 已注入到 calculated_result")
             
             # 自动生成缓存文件名
             if not cache:

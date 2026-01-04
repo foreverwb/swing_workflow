@@ -10,6 +10,7 @@ import json
 from typing import Dict, Any, Optional, Tuple
 from datetime import datetime
 from utils.config_loader import config
+from loguru import logger
 import traceback
 
 class FieldCalculator:
@@ -355,10 +356,23 @@ class FieldCalculator:
         return targets
 
     def _calculate_cluster_strength_ratio(self, targets: Dict) -> Dict:
-        """计算 cluster_strength_ratio"""
+        """
+        计算 cluster_strength_ratio
+        
+        优先级：
+        1. 使用已经存在的 cluster_strength_ratio (从 code_input_calc 写入的)
+        2. 如果不存在，从 structural_peaks 计算
+        """
         gamma_metrics = targets.get('gamma_metrics', {})
         
-        # [Fix] 适配 structural_peaks 嵌套结构
+        # [Fix] 优先使用已经计算好的 cluster_strength_ratio
+        existing_ratio = gamma_metrics.get('cluster_strength_ratio')
+        if existing_ratio is not None and existing_ratio != -999 and self._is_valid_value(existing_ratio):
+            # 已经有有效值，直接返回
+            print(f"📊 使用已有 cluster_strength_ratio: {existing_ratio}")
+            return targets
+        
+        # [Fix] 否则从 structural_peaks 计算
         peaks = gamma_metrics.get('structural_peaks', {})
         nearby_peak = peaks.get('nearby_peak', {})
         next_cluster_peak = peaks.get('secondary_peak') or peaks.get('next_cluster_peak', {})
@@ -418,7 +432,9 @@ class FieldCalculator:
         return True
 
 def main(aggregated_data: dict, symbol: str, **env_vars) -> dict:
+    print("----------- calculator start ------------")
     try:
+        logger.info("🔧 [FieldCalculator] 开始执行字段计算")
         print("🔍 [Calculator] 开始验证原始字段完整性")
         payload = aggregated_data.get('result')
         
@@ -433,28 +449,39 @@ def main(aggregated_data: dict, symbol: str, **env_vars) -> dict:
         market_params = env_vars.get('market_params', {})
         event_data = env_vars.get('event_data', {})
         
+        logger.info(f"   输入数据 keys: {list(data.keys()) if isinstance(data, dict) else type(data)}")
+        logger.info(f"   market_params: VIX={market_params.get('vix')}")
+        
         calculator = FieldCalculator(config, market_params=market_params, event_data=event_data)
         validation = calculator.validate_raw_fields(data)
         
+        logger.info(f"📊 验证结果: 完成率 {validation['completion_rate']}%")
         print(f"\n📊 验证结果: 完成率 {validation['completion_rate']}%")
         
         if validation['missing_fields']:
             critical = [f for f in validation['missing_fields'] if f.get('severity') == 'critical']
             if critical:
+                logger.warning(f"🚨 严重缺失字段: {[item.get('path') for item in critical]}")
                 print(f"\n🚨 严重缺失:")
                 for item in critical: print(f"    • {item.get('path')} ({item.get('reason','')})")
         
         if not validation["is_complete"]:
+            logger.warning(f"❌ [FieldCalculator] 数据不完整，无法计算")
             result = {"data_status": "awaiting_data", "validation": validation, "targets": data.get("targets"), "symbol": symbol}
             return result
         
+        logger.info("🔧 开始计算衍生字段...")
         print("\n🔧 开始计算衍生字段...")
         calculated_data = calculator.calculate_all(data)
         
+        logger.success(f"✅ [FieldCalculator] 计算完成, data_status=ready")
         result = {"data_status": "ready", "validation": validation, "symbol": symbol, **calculated_data}
+        print("----------- calculator end ------------")
+
         return result
     
     except Exception as e:
+        logger.error(f"❌ [FieldCalculator] 执行异常: {str(e)}")
         print(f"\n❌ Calculator 执行异常: {str(e)}")
         print(traceback.format_exc())
         return {"symbol": symbol, "result": json.dumps({"error": True, "error_message": str(e)}, ensure_ascii=False)}

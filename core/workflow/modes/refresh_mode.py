@@ -166,14 +166,27 @@ class RefreshMode(FullAnalysisMode):
             计算后的结果
         """
         from code_nodes.code_input_calc import InputFileCalculator
+        from dataclasses import asdict
         
         logger.info(f"📄 [Refresh] 从 JSON 文件加载: {input_path.name}")
         
         try:
-            # 1. 使用 InputFileCalculator 预计算 micro_structure
+            # 确保是 Path 对象
+            if isinstance(input_path, str):
+                input_path = Path(input_path)
+            
+            # 验证文件存在
+            if not input_path.exists():
+                raise FileNotFoundError(f"文件不存在: {input_path}")
+            
+            # 1. 使用 InputFileCalculator 预计算 cluster_strength_ratio 和 micro_structure
             input_calculator = InputFileCalculator(str(input_path))
             input_calculator.load()
             calc_result = input_calculator.calculate()
+            
+            # [Fix] 调用 write_back 将 cluster_strength_ratio 写回输入文件
+            input_calculator.write_back()
+            logger.info(f"✅ cluster_strength_ratio 已写回输入文件: {input_path}")
             
             # 获取计算后的数据（包含 micro_structure）
             raw_data = input_calculator.data
@@ -186,6 +199,14 @@ class RefreshMode(FullAnalysisMode):
                 targets["gamma_metrics"] = {}
             if calc_result.get("micro_structure"):
                 targets["gamma_metrics"]["micro_structure"] = calc_result["micro_structure"]
+            
+            # [Fix] 注入 cluster_strength_ratio 到 targets.gamma_metrics
+            if calc_result.get("cluster_strength_ratio") is not None:
+                targets["gamma_metrics"]["cluster_strength_ratio"] = calc_result["cluster_strength_ratio"]
+                logger.info(f"✅ cluster_strength_ratio={calc_result['cluster_strength_ratio']} 已注入到 targets")
+            
+            # [Fix] 获取 cluster_assessment 数据
+            cluster_assessment = input_calculator.get_cluster_assessment()
             
             if not targets:
                 raise ValueError("输入文件无效: 缺少 spec.targets")
@@ -214,6 +235,17 @@ class RefreshMode(FullAnalysisMode):
             
             # 注入 Market Params
             calculated_result["market_params"] = current_market_params
+            
+            # [Fix] 注入 cluster_assessment 到 calculated_result
+            if cluster_assessment:
+                calculated_result["cluster_assessment"] = {
+                    "tier": cluster_assessment.tier,
+                    "score": cluster_assessment.score,
+                    "avg_top1": cluster_assessment.avg_top1,
+                    "avg_enp": cluster_assessment.avg_enp,
+                    "panels": [asdict(pm) for pm in cluster_assessment.panels],
+                }
+                logger.info(f"✅ cluster_assessment (tier={cluster_assessment.tier}) 已注入到 calculated_result")
             
             return calculated_result
             

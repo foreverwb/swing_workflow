@@ -845,7 +845,10 @@ class InputFileCalculator:
     
     def write_back(self, output_path: str = None) -> str:
         """
-        将计算结果写回文件
+        将计算结果写回输入文件
+        
+        注意：只写入 cluster_strength_ratio 和 micro_structure 到输入文件
+        cluster_assessment 不写入输入文件，应该由 cache_manager 写入到输出缓存文件
         """
         if not self.data:
             self.load()
@@ -864,24 +867,17 @@ class InputFileCalculator:
         if "gamma_metrics" not in self.data["spec"]["targets"]:
             self.data["spec"]["targets"]["gamma_metrics"] = {}
         
+        # 写入 cluster_strength_ratio
         self.data["spec"]["targets"]["gamma_metrics"]["cluster_strength_ratio"] = ratio
         
-        # [新增] 写入微观结构分析
+        # 写入 micro_structure (ECR/SER/TSR)
         if self._assessment:
-             # 重新获取(确保已有)
              raw_micro = compute_ECR_SER_TSR(self.data)
              micro_data = interpret_micro_structure(raw_micro)
              self.data["spec"]["targets"]["gamma_metrics"]["micro_structure"] = micro_data
 
-        # 如果有 ClusterAssessment 结果，也写入
-        if self._cluster_assessment:
-            self.data["spec"]["targets"]["gamma_metrics"]["cluster_assessment"] = {
-                "tier": self._cluster_assessment.tier,
-                "score": self._cluster_assessment.score,
-                "avg_top1": self._cluster_assessment.avg_top1,
-                "avg_enp": self._cluster_assessment.avg_enp,
-                "panels": [asdict(pm) for pm in self._cluster_assessment.panels],
-            }
+        # [Fix] 不再写入 cluster_assessment 到输入文件
+        # cluster_assessment 应该由 cache_manager 写入到输出缓存文件 (data/output/)
         
         # 确定输出路径
         out_path = Path(output_path) if output_path else self.input_path
