@@ -365,29 +365,12 @@ class FieldCalculator:
         """
         gamma_metrics = targets.get('gamma_metrics', {})
         
-        # [Fix] 优先使用已经计算好的 cluster_strength_ratio
+        #使用已经计算好的 cluster_strength_ratio
         existing_ratio = gamma_metrics.get('cluster_strength_ratio')
         if existing_ratio is not None and existing_ratio != -999 and self._is_valid_value(existing_ratio):
             # 已经有有效值，直接返回
             print(f"📊 使用已有 cluster_strength_ratio: {existing_ratio}")
             return targets
-        
-        # [Fix] 否则从 structural_peaks 计算
-        peaks = gamma_metrics.get('structural_peaks', {})
-        nearby_peak = peaks.get('nearby_peak', {})
-        next_cluster_peak = peaks.get('secondary_peak') or peaks.get('next_cluster_peak', {})
-        
-        nearby_abs_gex = nearby_peak.get('abs_gex')
-        next_cluster_abs_gex = next_cluster_peak.get('abs_gex')
-        
-        if not nearby_abs_gex or not next_cluster_abs_gex or nearby_abs_gex == 0:
-            if 'gamma_metrics' not in targets: targets['gamma_metrics'] = {}
-            targets['gamma_metrics']['cluster_strength_ratio'] = -999
-            return targets
-        
-        ratio = next_cluster_abs_gex / nearby_abs_gex
-        targets['gamma_metrics']['cluster_strength_ratio'] = round(ratio, 2)
-        return targets
     
     def _calculate_indices_em1(self, data: Dict) -> Dict:
         indices = data.get('indices', {})
@@ -432,7 +415,6 @@ class FieldCalculator:
         return True
 
 def main(aggregated_data: dict, symbol: str, **env_vars) -> dict:
-    print("----------- calculator start ------------")
     try:
         logger.info("🔧 [FieldCalculator] 开始执行字段计算")
         print("🔍 [Calculator] 开始验证原始字段完整性")

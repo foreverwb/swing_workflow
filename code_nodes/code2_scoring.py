@@ -208,7 +208,7 @@ class OptionsScoring:
         
         # DEX方向评估
         has_strong_dex = (dex_bias == 'support' and dex_strength == 'strong')
-        has_medium_dex = (dex_bias == 'support' and dex_strength == 'mid')
+        has_medium_dex = (dex_bias == 'support' and dex_strength == 'medium')
         has_mixed_dex = (dex_bias == 'mixed')
         has_oppose_dex = (dex_bias == 'oppose')
         
@@ -267,27 +267,27 @@ class OptionsScoring:
         }
     
     def calculate_iv_score(self, directional_metrics: Dict) -> Dict:
-        iv_path = directional_metrics.get('iv_path', '平')
+        iv_path = directional_metrics.get('iv_path', 'Flat')  # '平' → 'Flat'
         iv_confidence = directional_metrics.get('iv_path_confidence', 'low')
         
-        if iv_path == "升" and iv_confidence in ['high', 'medium']:
+        if iv_path == "Rising" and iv_confidence in ['high', 'medium']:  # "升" → "Rising"
             iv_signal = "波动率扩张"
             note = "利多波动率策略"
             score = 8 if iv_confidence == 'high' else 6
             conf_desc = "高置信" if iv_confidence == 'high' else "中等置信"
-        elif iv_path == "降":
+        elif iv_path == "Falling":  # "降" → "Falling"
             iv_signal = "波动率压缩"
             note = "利空波动率"
             if iv_confidence == 'high': score = 3; conf_desc = "高置信下降"
             elif iv_confidence == 'medium': score = 4; conf_desc = "中等置信下降"
             else: score = 5; conf_desc = "低置信下降"
-        else:
+        else:  # "Flat" 或 "Insufficient_Data"
             iv_signal = "中性"
             note = "波动率稳定或数据不足"
             score = 5
             conf_desc = "平稳或不确定"
         
-        iv_note = f"IV路径显示{iv_path}趋势，置信度{iv_confidence}，{note}"
+        iv_note = f"IV路径显示{iv_path}趋势，置信度{iv_confidence}, {note}"
         rationale = f"iv_path {iv_path}且confidence {iv_confidence}({conf_desc})给{score}分"
         
         return {
@@ -334,11 +334,11 @@ class OptionsScoring:
         idx_em1 = primary_index.get('em1_dollar_idx', 0)
         stock_spot_vs_trigger = gamma_metrics.get('spot_vs_trigger', '')
         stock_gap_distance = gamma_metrics.get('gap_distance_dollar', 0)
-        stock_iv_path = directional_metrics.get('iv_path', '平')
+        stock_iv_path = directional_metrics.get('iv_path', 'Flat')
         stock_dex_bias = directional_metrics.get('dex_bias', 'mixed')
         
         if idx_net_gex == 'positive_gamma' and stock_spot_vs_trigger == 'above':
-            if stock_iv_path in ['平', '降']:
+            if stock_iv_path in ['Flat', 'Falling']:
                 adjustment += consistency_bonus
                 consistency_note.append(f"{primary_symbol}正γ且个股在墙上，IV{stock_iv_path}符合区间预期")
             else:
@@ -349,8 +349,8 @@ class OptionsScoring:
                 threshold = threshold_ratio * idx_em1
                 if stock_gap_distance >= threshold:
                     iv_cooperates = (
-                        (stock_spot_vs_trigger == 'below' and stock_iv_path == '升') or
-                        (stock_spot_vs_trigger == 'above' and stock_iv_path == '降')
+                        (stock_spot_vs_trigger == 'below' and stock_iv_path == 'Rising') or
+                        (stock_spot_vs_trigger == 'above' and stock_iv_path == 'Falling')
                     )
                     if iv_cooperates:
                         adjustment += consistency_bonus
@@ -466,7 +466,7 @@ class OptionsScoring:
         dex_bias = directional.get('dex_bias', 'mixed')
         dex_strength = directional.get('dex_bias_strength', 'weak')
         # DEX支持条件：bias=support 且 strength 不为 weak
-        if dex_bias == 'support' and dex_strength in ['strong', 'mid']:
+        if dex_bias == 'support' and dex_strength in ['strong', 'medium']:
             conditions_met.append(f"条件3: dex_bias={dex_bias}/{dex_strength}支持")
         else:
             conditions_failed.append(f"条件3: dex_bias={dex_bias}/{dex_strength}不支持")
@@ -523,7 +523,7 @@ class OptionsScoring:
         spot_vs_trigger = gamma.get('spot_vs_trigger', 'unknown')
         cluster_strength = gamma.get('cluster_strength_ratio', 0)
         vanna_dir = directional.get('vanna_dir', 'neutral')
-        iv_path = directional.get('iv_path', '平')
+        iv_path = directional.get('iv_path', 'Flat')  # '平' → 'Flat'
         
         if gap_distance > 2:
             wall_type = "Call Wall" if spot_vs_trigger == 'above' else "Put Wall"
@@ -534,8 +534,8 @@ class OptionsScoring:
         
         vanna_up = vanna_dir == 'up'
         vanna_down = vanna_dir == 'down'
-        iv_up = iv_path == '升'
-        iv_down = iv_path == '降'
+        iv_up = iv_path == 'Rising'    
+        iv_down = iv_path == 'Falling' 
         
         if (vanna_up and iv_down) or (vanna_down and iv_up):
             warnings.append(f"Vanna方向{vanna_dir}与IV路径{iv_path}冲突，信号不一致")

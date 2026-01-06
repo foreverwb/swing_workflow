@@ -119,7 +119,7 @@ def get_schema() -> dict:
                             },
                             "dex_bias_strength": {
                                 "type": "string",
-                                "enum": ["strong", "mid", "weak", "N/A"]
+                                "enum": ["strong", "medium", "weak", "N/A"]
                             },
                             "vanna_dir": {
                                 "type": "string",
@@ -136,7 +136,8 @@ def get_schema() -> dict:
                             },
                             "iv_path_confidence": {
                                 "type": "string",
-                                "enum": ["High", "Medium", "Low", "N/A"]
+                                "enum": ["high", "medium", "low", "N/A"], 
+                                "description": "IV 路径置信度（基于连续性和斜率）"
                             }
                         }
                     },

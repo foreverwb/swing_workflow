@@ -166,7 +166,7 @@ class StrategyCalculator:
         # 1. 强 DEX 信号主导 (Dealer 库存倾向)
         if dex_bias == "support" and dex_strength in ["strong", "medium"]:
             return "Long Delta", "DEX强支撑 (Dealer做多库存)"
-        elif dex_bias == "resistance" and dex_strength in ["strong", "medium"]:
+        elif dex_bias == "oppose" and dex_strength in ["strong", "medium"]: 
             return "Short Delta", "DEX强阻力 (Dealer做空库存)"
             
         # 2. Gamma Regime 辅助
