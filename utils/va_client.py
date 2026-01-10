@@ -79,6 +79,39 @@ class VAClient:
             raise VAClientError(f"API 请求失败: {error_msg}")
         except Exception as e:
             raise VAClientError(f"请求异常: {str(e)}")
+
+    def get_bridge_snapshot(
+        self,
+        symbol: str,
+        vix: float | None = None,
+        date: str | None = None,
+    ) -> Dict[str, Any]:
+        """
+        获取 BridgeSnapshot，用于期限结构 + 市场上下文
+        """
+        params = {}
+        if vix is not None:
+            params["vix"] = vix
+        if date is not None:
+            params["date"] = date
+
+        data = self._make_request(
+            "GET",
+            f"/api/bridge/params/{symbol.upper()}",
+            params=params,
+        )
+
+        # VA 可能返回 {"success": true, "snapshot": {...}} 或直接返回 snapshot
+        if isinstance(data, dict) and data.get("success") is False:
+            raise VAClientError(data.get("error", "Unknown error"))
+
+        if isinstance(data, dict):
+            if data.get("snapshot") is not None:
+                return data["snapshot"]
+            if data.get("bridge") is not None:
+                return data["bridge"]
+
+        return data
     
     def get_params(self, symbol: str, vix: float = None, date: str = None) -> Dict[str, Any]:
         """
@@ -158,6 +191,58 @@ class VAClient:
                 logger.warning(f"获取 {sym} 参数失败: {err}")
         
         return data.get('results', {})
+
+    def fetch_market_context(
+        self,
+        symbol: str,
+        vix: float | None = None,
+        date: str | None = None,
+    ) -> Dict[str, Any]:
+        """
+        便捷方法：优先获取 BridgeSnapshot，否则退化为市场参数
+        """
+        try:
+            bridge = self.get_bridge_snapshot(symbol, vix=vix, date=date)
+        except VAClientError:
+            params = self.get_params(symbol, vix=vix, date=date)
+            return {
+                "market_params": params,
+                "bridge": None,
+            }
+
+        ms = bridge.get("market_state", {}) or {}
+        es = bridge.get("event_state", {}) or {}
+
+        market_params = {
+            "vix": vix if vix is not None else ms.get("vix"),
+            "ivr": ms.get("ivr"),
+            "iv30": ms.get("iv30"),
+            "hv20": ms.get("hv20"),
+            "iv_path": ms.get("iv_path") or "Insufficient_Data",
+        }
+        if es.get("earnings_date"):
+            market_params["earning_date"] = es["earnings_date"]
+
+        api_params = None
+        # 如果 Bridge 缺少关键字段，尝试回退到 swing params 填充
+        missing = [k for k in ("vix", "ivr", "iv30", "hv20") if market_params.get(k) is None]
+        if missing:
+            api_params = self.get_params(symbol, vix=vix, date=date)
+            for key in ("vix", "ivr", "iv30", "hv20", "iv_path", "earning_date"):
+                if market_params.get(key) is None and key in api_params:
+                    market_params[key] = api_params.get(key)
+
+        # 如果 iv_path 仍为空或标记不足，尝试用 swing params 补齐
+        if not market_params.get("iv_path") or market_params.get("iv_path") == "Insufficient_Data":
+            if api_params is None:
+                api_params = self.get_params(symbol, vix=vix, date=date)
+            if api_params.get("iv_path"):
+                market_params["iv_path"] = api_params["iv_path"]
+
+        return {
+            "market_params": market_params,
+            "bridge": bridge,
+        }
     
     def list_symbols(self) -> List[str]:
         """
@@ -229,6 +314,20 @@ def fetch_market_params(symbol: str, vix: float = None, date: str = None) -> Dic
         市场参数字典
     """
     return get_default_client().get_params(symbol, vix, date)
+
+
+def fetch_market_context(symbol: str, vix: float | None = None, date: str | None = None) -> Dict[str, Any]:
+    """
+    便捷函数：优先获取 BridgeSnapshot，否则退化为市场参数
+
+    Returns:
+        {
+          "market_params": {...},
+          "bridge": BridgeSnapshot or None
+        }
+    """
+    client = get_default_client()
+    return client.fetch_market_context(symbol, vix=vix, date=date)
 
 
 def is_va_service_running() -> bool:

@@ -195,6 +195,16 @@ class AnalyzeCommand(BaseCommand):
         market_params = kwargs.get('market_params')
         dyn_params = kwargs.get('dyn_params')
         tag = kwargs.get('tag')
+        bridge = kwargs.get("bridge") or self.env_vars.get("bridge")
+
+        # 确保 env_vars 中的上下文是最新的
+        self.env_vars["symbol"] = symbol
+        if market_params:
+            self.env_vars["market_params"] = market_params
+        if dyn_params:
+            self.env_vars["dyn_params"] = dyn_params
+        if bridge:
+            self.env_vars["bridge"] = bridge
         
         # 3. 路由逻辑
         
@@ -210,14 +220,15 @@ class AnalyzeCommand(BaseCommand):
                     vix=market_params['vix'],
                     ivr=market_params['ivr'],
                     iv30=market_params['iv30'],
-                    hv20=market_params['hv20']
+                    hv20=market_params['hv20'],
+                    term_structure=(bridge or {}).get("term_structure") if bridge else None,
                 )
                 logger.info(f"✅ 市场状态计算完成: {pre_calc_params['scenario']}")
             except ValueError as e:
                 self.print_error(f"市场参数验证失败: {e}")
                 sys.exit(1)
             
-            return self._generate_command_list(symbol, pre_calc_params, tag=tag)
+            return self._generate_command_list(symbol, pre_calc_params, tag=tag, bridge=bridge)
         
         # [Mode C] 直接文件分析 (有 JSON 输入, Phase 3 New)
         elif input_file:
@@ -237,7 +248,8 @@ class AnalyzeCommand(BaseCommand):
                         vix=market_params['vix'],
                         ivr=market_params['ivr'],
                         iv30=market_params['iv30'],
-                        hv20=market_params['hv20']
+                        hv20=market_params['hv20'],
+                        term_structure=(bridge or {}).get("term_structure") if bridge else None,
                     )
                 except ValueError as e:
                     self.print_error(f"市场参数验证失败: {e}")
@@ -417,11 +429,26 @@ class AnalyzeCommand(BaseCommand):
             self.console.print(traceback.format_exc())
             sys.exit(1)
     
-    def _generate_command_list(self, symbol: str, pre_calc: Dict, tag: str = None) -> Dict[str, Any]:
+    def _generate_command_list(self, symbol: str, pre_calc: Dict, tag: str = None, bridge: Dict[str, Any] | None = None) -> Dict[str, Any]:
         """生成命令清单 (包含输入模板生成)"""
+        term_label = pre_calc.get("term_structure_label")
+        term_bias = pre_calc.get("term_structure_bias")
+        if bridge and (not term_label or not term_bias):
+            ts = (bridge or {}).get("term_structure") or {}
+            term_label = term_label or ts.get("label")
+            term_bias = term_bias or ts.get("horizon_bias")
+
+        term_line = f"市场场景: {pre_calc.get('scenario', 'N/A')}"
+        if term_label or term_bias:
+            hb = term_bias or {}
+            b_short = float(hb.get("short", 1.0) or 1.0)
+            b_mid = float(hb.get("mid", 1.0) or 1.0)
+            b_long = float(hb.get("long", 1.0) or 1.0)
+            term_line = f"{term_line} | Term: {term_label or 'N/A'} (short={b_short:.2f}, mid={b_mid:.2f}, long={b_long:.2f})"
+
         self.console.print(Panel.fit(
             f"[bold green]📋 生成命令清单: {symbol.upper()}[/bold green]\n"
-            f"[dim]市场场景: {pre_calc['scenario']}[/dim]\n"
+            f"[dim]{term_line}[/dim]\n"
             f"[dim]动态参数: Strikes={pre_calc['dyn_strikes']} DTE={pre_calc['dyn_dte_mid']} Window={pre_calc['dyn_window']}[/dim]",
             border_style="green"
         ))

@@ -106,17 +106,17 @@ class QuickCommand(BaseCommand):
         
         # 1. 从 VA API 获取参数
         try:
-            params = self._fetch_market_params(symbol, vix, target_date)
+            market_params, bridge = self._fetch_market_context(symbol, vix, target_date)
         except VAClientError as e:
             self.console.print(f"[red]❌ VA API 调用失败: {e}[/red]")
             return {"status": "error", "message": str(e)}
         
         # 2. 验证参数
         try:
-            params = self._validate_params(params)
+            market_params = self._validate_params(market_params)
             # 验证通过后才打印成功消息
             self.console.print(f"[green]✅ 参数获取成功[/green]")
-            self.console.print(f"[dim]   VIX={params['vix']}, IVR={params['ivr']}, VRP={params['iv30']/params['hv20']:.2f}[/dim]")
+            self.console.print(f"[dim]   VIX={market_params['vix']}, IVR={market_params['ivr']}, VRP={market_params['iv30']/market_params['hv20']:.2f}[/dim]")
         except ValueError as e:
             self.console.print(f"[red]❌ 参数验证失败: {e}[/red]")
             return {"status": "error", "message": str(e)}
@@ -124,7 +124,8 @@ class QuickCommand(BaseCommand):
         # 3. 准备环境变量
         env_vars = {
             'config': self.env_vars.get('config'),
-            'market_params': params,
+            'market_params': market_params,
+            'bridge': bridge,
             'tag': 'Meso'
         }
         
@@ -147,27 +148,29 @@ class QuickCommand(BaseCommand):
             output=output,
             mode='full',
             cache=cache,
-            market_params=params,
+            market_params=market_params,
             dyn_params=env_vars.get('dyn_params'),
-            tag='Meso'
+            tag='Meso',
+            bridge=bridge
         )
     
-    def _fetch_market_params(self, symbol: str, vix: float = None, target_date: str = None) -> Dict[str, Any]:
-        """从 VA API 获取市场参数"""
-        api_params = self.va_client.get_params(symbol, vix=vix, date=target_date)
-        
-        params = {
-            'vix': vix if vix is not None else api_params.get('vix'),
-            'ivr': api_params['ivr'],
-            'iv30': api_params['iv30'],
-            'hv20': api_params['hv20'],
-            'iv_path': api_params.get('iv_path', 'Insufficient_Data')
-        }
-        
-        if api_params.get('earning_date'):
-            params['earning_date'] = api_params['earning_date']
-        
-        return params
+    def _fetch_market_context(self, symbol: str, vix: float = None, target_date: str = None) -> tuple[Dict[str, Any], Dict[str, Any] | None]:
+        """获取市场上下文（Bridge + 市场参数）"""
+        try:
+            ctx = self.va_client.fetch_market_context(symbol, vix=vix, date=target_date)
+            return ctx["market_params"], ctx.get("bridge")
+        except VAClientError:
+            api_params = self.va_client.get_params(symbol, vix=vix, date=target_date)
+            params = {
+                "vix": vix if vix is not None else api_params.get("vix"),
+                "ivr": api_params["ivr"],
+                "iv30": api_params["iv30"],
+                "hv20": api_params["hv20"],
+                "iv_path": api_params.get("iv_path", "Insufficient_Data"),
+            }
+            if api_params.get("earning_date"):
+                params["earning_date"] = api_params["earning_date"]
+            return params, None
     
     def _validate_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """验证市场参数"""
