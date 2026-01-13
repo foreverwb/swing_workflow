@@ -89,7 +89,9 @@ class VAClient:
         """
         获取 BridgeSnapshot，用于期限结构 + 市场上下文
         """
-        params = {}
+        params = {
+            'source': 'swing'
+        }
         if vix is not None:
             params["vix"] = vix
         if date is not None:
