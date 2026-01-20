@@ -269,12 +269,15 @@ class FullAnalysisMode(BaseMode):
             计算后的数据
         """
         
+        calc_kwargs = dict(self.env_vars)
+        calc_kwargs.update({
+            "aggregated_data": agent3_result,  # Calculator 期望的参数名
+            "symbol": symbol,
+        })
         result = self.agent_executor.execute_code_node(
             node_name="Calculator",
             func=calculator_main,
-            aggregated_data=agent3_result,  # Calculator 期望的参数名
-            symbol=symbol,
-            **self.env_vars
+            **calc_kwargs
         )
         return result
 

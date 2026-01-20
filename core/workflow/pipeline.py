@@ -169,10 +169,17 @@ class AnalysisPipeline:
             match = re.match(r'(\w+)_o_(\d{8})\.json', self.cache_file)
             if match: start_date = match.group(2)
         
+        html_kwargs = dict(self.env_vars)
+        html_kwargs.update({
+            "symbol": symbol,
+            "final_data": final_data_payload,
+            "mode": "full",
+            "output_dir": "data/output",
+            "start_date": start_date,
+        })
         result = self.agent_executor.execute_code_node(
             node_name="HTML报告生成", func=html_report_main, description="生成HTML",
-            symbol=symbol, final_data=final_data_payload, mode="full",
-            output_dir="data/output", start_date=start_date, **self.env_vars
+            **html_kwargs
         )
         
         context["html_report_result"] = result
