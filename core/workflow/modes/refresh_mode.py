@@ -141,13 +141,16 @@ class RefreshMode(FullAnalysisMode):
         """调用计算节点"""
         calculator_input = {"result": agent3_result}
         try:
+            calc_kwargs = dict(self.env_vars)
+            calc_kwargs.update({
+                "aggregated_data": calculator_input,
+                "symbol": symbol,
+            })
             result = self.agent_executor.execute_code_node(
                 node_name="Calculator",
                 func=calculator_main,
                 description="计算 Refresh 衍生字段",
-                aggregated_data=calculator_input,
-                symbol=symbol,
-                **self.env_vars
+                **calc_kwargs
             )
             return result
         except Exception as e:
