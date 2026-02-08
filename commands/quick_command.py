@@ -4,6 +4,7 @@ Quick Command - 快速分析命令
 """
 
 import sys
+from datetime import datetime
 from typing import Dict, Any
 
 from rich.console import Console
@@ -122,12 +123,13 @@ class QuickCommand(BaseCommand):
             return {"status": "error", "message": str(e)}
         
         # 3. 准备环境变量
-        env_vars = {
-            'config': self.env_vars.get('config'),
-            'market_params': market_params,
-            'bridge': bridge,
-            'tag': 'Meso'
-        }
+        output_date = self._resolve_output_date(target_date)
+        env_vars = self.build_analysis_env(
+            market_params=market_params,
+            bridge=bridge,
+            tag='Meso',
+            start_date=output_date,
+        )
         
         # 4. 如果有缓存文件，加载动态参数
         if folder and cache:
@@ -151,26 +153,148 @@ class QuickCommand(BaseCommand):
             market_params=market_params,
             dyn_params=env_vars.get('dyn_params'),
             tag='Meso',
-            bridge=bridge
+            bridge=bridge,
+            output_date=output_date,
         )
+    
+    def build_analysis_env(
+        self,
+        market_params: Dict[str, Any],
+        bridge: Dict[str, Any] | None = None,
+        tag: str = 'Meso',
+        dyn_params: Dict[str, Any] | None = None,
+        start_date: str | None = None,
+    ) -> Dict[str, Any]:
+        """构建 AnalyzeCommand 所需环境上下文"""
+        env = {
+            'config': self.env_vars.get('config'),
+            'market_params': market_params,
+            'bridge': bridge,
+            'tag': tag
+        }
+        if dyn_params:
+            env['dyn_params'] = dyn_params
+        if start_date:
+            env['start_date'] = start_date
+        return env
+
+    def parse_market_context_payload(
+        self,
+        symbol: str,
+        payload: Dict[str, Any],
+        vix: float = None,
+    ) -> tuple[Dict[str, Any], Dict[str, Any] | None]:
+        """
+        统一解析市场上下文载荷（用于 quick / mass）
+        支持 market_params / bridge snapshot / params 三种形态。
+        """
+        if not isinstance(payload, dict):
+            raise ValueError(f"{symbol}: 无效上下文载荷类型")
+
+        bridge = payload.get("bridge")
+        market_params = payload.get("market_params")
+
+        snapshot = payload.get("snapshot")
+        if not bridge and isinstance(snapshot, dict):
+            bridge = snapshot
+
+        if not bridge and self._looks_like_bridge_snapshot(payload):
+            bridge = payload
+
+        if not market_params and isinstance(payload.get("params"), dict):
+            market_params = payload.get("params")
+
+        if not market_params and self._looks_like_market_params(payload):
+            market_params = payload
+
+        if bridge and not market_params:
+            market_params = self._build_market_params_from_bridge(bridge, vix=vix)
+
+        if bridge and market_params:
+            bridge_params = self._build_market_params_from_bridge(bridge, vix=vix)
+            merged = dict(market_params)
+            for key, value in bridge_params.items():
+                if merged.get(key) is None:
+                    merged[key] = value
+            market_params = merged
+
+        if not market_params:
+            raise ValueError(f"{symbol}: 上下文中缺少 market_params")
+
+        normalized = self._normalize_market_params(market_params, vix=vix)
+        return normalized, bridge
     
     def _fetch_market_context(self, symbol: str, vix: float = None, target_date: str = None) -> tuple[Dict[str, Any], Dict[str, Any] | None]:
         """获取市场上下文（Bridge + 市场参数）"""
         try:
             ctx = self.va_client.fetch_market_context(symbol, vix=vix, date=target_date)
-            return ctx["market_params"], ctx.get("bridge")
+            return self.parse_market_context_payload(symbol, ctx, vix=vix)
         except VAClientError:
             api_params = self.va_client.get_params(symbol, vix=vix, date=target_date)
-            params = {
-                "vix": vix if vix is not None else api_params.get("vix"),
-                "ivr": api_params["ivr"],
-                "iv30": api_params["iv30"],
-                "hv20": api_params["hv20"],
-                "iv_path": api_params.get("iv_path", "Insufficient_Data"),
-            }
-            if api_params.get("earning_date"):
-                params["earning_date"] = api_params["earning_date"]
-            return params, None
+            return self.parse_market_context_payload(
+                symbol=symbol,
+                payload={"market_params": api_params},
+                vix=vix,
+            )
+
+    @staticmethod
+    def _looks_like_bridge_snapshot(payload: Dict[str, Any]) -> bool:
+        return "market_state" in payload or "term_structure" in payload or "event_state" in payload
+
+    @staticmethod
+    def _looks_like_market_params(payload: Dict[str, Any]) -> bool:
+        return all(k in payload for k in ("ivr", "iv30", "hv20"))
+
+    @staticmethod
+    def _build_market_params_from_bridge(bridge: Dict[str, Any], vix: float = None) -> Dict[str, Any]:
+        ms = bridge.get("market_state", {}) or {}
+        es = bridge.get("event_state", {}) or {}
+        params = {
+            "vix": vix if vix is not None else ms.get("vix"),
+            "ivr": ms.get("ivr"),
+            "iv30": ms.get("iv30"),
+            "hv20": ms.get("hv20"),
+            "iv_path": ms.get("iv_path") or "Insufficient_Data",
+        }
+        if es.get("earnings_date"):
+            params["earning_date"] = es.get("earnings_date")
+        return params
+
+    @staticmethod
+    def _normalize_market_params(raw_params: Dict[str, Any], vix: float = None) -> Dict[str, Any]:
+        params = {
+            "vix": vix if vix is not None else raw_params.get("vix"),
+            "ivr": raw_params.get("ivr"),
+            "iv30": raw_params.get("iv30"),
+            "hv20": raw_params.get("hv20"),
+            "iv_path": raw_params.get("iv_path", "Insufficient_Data"),
+        }
+        if raw_params.get("earning_date"):
+            params["earning_date"] = raw_params.get("earning_date")
+        return params
+
+    @staticmethod
+    def _resolve_output_date(target_date: str | None = None) -> str:
+        """
+        解析输出目录日期，统一为 YYYYMMDD。
+        - 指定 target_date: 支持 YYYY-MM-DD / YYYYMMDD
+        - 未指定: 使用当前日期
+        """
+        if not target_date:
+            return datetime.now().strftime("%Y%m%d")
+
+        date_str = str(target_date).strip()
+        if not date_str:
+            return datetime.now().strftime("%Y%m%d")
+
+        for fmt in ("%Y-%m-%d", "%Y%m%d"):
+            try:
+                return datetime.strptime(date_str, fmt).strftime("%Y%m%d")
+            except ValueError:
+                continue
+
+        # 兜底保留旧行为（由下游默认当天），同时避免抛错影响 quick
+        return datetime.now().strftime("%Y%m%d")
     
     def _validate_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """验证市场参数"""

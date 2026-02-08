@@ -60,7 +60,11 @@ python app.py analyze NVDA -f ./data/images --cache NVDA_20251206.json
 # 3. 快速分析（自动从 VA API 获取参数）
 python app.py quick NVDA -v 18.5 -f ./data -c NVDA_20251206.json
 
-# 4. 盘中刷新（监控 Gamma 漂移）
+# 4. 批量准备（按日期批量生成命令清单 + 输入模板）
+python app.py mass -d 2026-01-04
+python app.py mass -d 2026-01-04 -s NVDA -s AAPL
+
+# 5. 盘中刷新（监控 Gamma 漂移）
 python app.py refresh NVDA -f ./data/latest -c NVDA_20251206.json
 ```
 
@@ -91,7 +95,7 @@ python app.py analyze <SYMBOL> [OPTIONS]
 ### quick - 快速分析
 
 ```bash
-python app.py quick <SYMBOL> -v <VIX> [OPTIONS]
+python app.py quick <SYMBOL> -v <VIX> [-d <YYYY-MM-DD>] [OPTIONS]
 ```
 
 自动从 VA API 获取 IVR/IV30/HV20 等参数。
@@ -99,9 +103,35 @@ python app.py quick <SYMBOL> -v <VIX> [OPTIONS]
 | 参数 | 简写 | 说明 |
 |------|------|------|
 | `--vix` | `-v` | VIX 指数（必需） |
-| `--target-date` | `-t` | 目标日期 |
+| `--target-date` | `-t` / `-d` | 目标日期 |
 | `--folder` | `-f` | 数据文件夹 |
 | `--cache` | `-c` | 缓存文件 |
+
+> 输出目录日期规则：`data/output/{symbol}/{date}/` 中的 `date` 使用 `-d/-t` 指定日期（格式化为 `YYYYMMDD`）；未指定时使用命令执行日期。
+
+### mass - 批量准备
+
+```bash
+python app.py mass [-d <YYYY-MM-DD>] [OPTIONS]
+mass -d 2026-01-04
+```
+
+按日期批量拉取 VA 参数，并为多个 symbol 生成：
+- 命令清单（Mode A 轻量流程）
+- 输入模板：`data/input/<YYYY-MM-DD>/{symbol}_i_<YYYY-MM-DD>.json`
+
+| 参数 | 简写 | 说明 |
+|------|------|------|
+| `--date` | `-d` | 目标日期（可选，格式 `YYYY-MM-DD`，默认当天） |
+| `--symbol` | `-s` | 指定 symbol，可重复或逗号分隔（如 `-s NVDA -s AAPL` 或 `-s NVDA,AAPL`） |
+| `--va-url` | - | VA API 服务地址 |
+| `--model-config` | - | 模型配置文件路径 |
+
+> 输出目录日期规则：`data/output/{symbol}/{date}/` 中的 `date` 使用 `-d` 指定日期（格式化为 `YYYYMMDD`）；未指定时使用命令执行日期。
+>
+> `source` 已固定为 `swing`，无需再传 `--source` 参数。
+>
+> 简化命令：项目根目录提供了可执行脚本 `mass`，可直接运行 `mass -d 2026-01-04`（若当前 shell 未包含项目目录到 `PATH`，请使用 `./mass -d 2026-01-04`）。
 
 ### refresh - 盘中刷新
 
@@ -223,6 +253,7 @@ python app.py params -o params.json --example
 | Update | `update` | 增量补齐缺失字段 |
 | Refresh | `refresh` | 盘中监控 Gamma 漂移 |
 | Quick | `quick` | 自动获取参数的快速分析 |
+| Mass | `mass -d` | 按日期批量准备命令清单与输入模板 |
 
 ---
 
@@ -345,6 +376,8 @@ swing_workflow/
 │   └── runtime_label_config.yaml  # RuntimeLabel 配置
 ├── commands/                 # CLI 命令处理器
 │   ├── analyze_command.py
+│   ├── quick_command.py
+│   ├── mass_command.py
 │   ├── refresh_command.py
 │   ├── backtest_command.py
 │   └── history_command.py

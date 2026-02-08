@@ -325,7 +325,8 @@ class CacheManager:
         market_params: Dict[str, float],
         dyn_params: Dict[str, Any],
         start_date: str = None,
-        cache_file: str = None
+        cache_file: str = None,
+        verbose: bool = True
     ) -> Path:
         """独立保存市场参数（用于 Quick 模式或初始化）- 增量更新"""
         if not symbol or str(symbol).upper() == "UNKNOWN":
@@ -400,9 +401,10 @@ class CacheManager:
             rel_path = cache_path.relative_to(Path(".").absolute())
         except ValueError:
             rel_path = cache_path
-        logger.success(f"✅ 市场参数已保存: {rel_path}")
-        logger.info(f"   场景: {cached['dyn_params'].get('scenario')}")
-        logger.info(f"   VRP: {cached['market_params']['vrp']:.2f}")
+        if verbose:
+            logger.success(f"✅ 市场参数已保存: {rel_path}")
+            logger.info(f"   场景: {cached['dyn_params'].get('scenario')}")
+            logger.info(f"   VRP: {cached['market_params']['vrp']:.2f}")
         
         return cache_path
 
@@ -423,7 +425,8 @@ class CacheManager:
         market_params: Dict[str, float],
         dyn_params: Dict[str, Any],
         start_date: str = None,
-        tag: str = None
+        tag: str = None,
+        verbose: bool = True
     ) -> Path:
         """初始化缓存骨架（用于生成命令清单后）"""
         if not symbol or str(symbol).upper() == "UNKNOWN":
@@ -436,8 +439,15 @@ class CacheManager:
         
         if cache_path.exists():
             # 如果文件已存在，仅更新参数，不覆盖其他数据
-            logger.info(f"🔄 缓存文件已存在，更新参数: {cache_path}")
-            return self.save_market_params(symbol, market_params, dyn_params, start_date=valid_start_date)
+            if verbose:
+                logger.info(f"🔄 缓存文件已存在，更新参数: {cache_path}")
+            return self.save_market_params(
+                symbol,
+                market_params,
+                dyn_params,
+                start_date=valid_start_date,
+                verbose=verbose,
+            )
         
         cache_data = {
             "symbol": symbol,
@@ -470,11 +480,12 @@ class CacheManager:
         try:
             cache_path.parent.mkdir(parents=True, exist_ok=True)
             self._save_cache(cache_path, cache_data)
-            logger.success(f"✅ 初始化缓存已创建: {cache_path}")
-            if tag:
-                logger.info(f"  • 工作流标识: tag={tag}")
-            logger.info(f"  • 场景: {dyn_params.get('scenario')}")
-            logger.info(f"  • 文件大小: {cache_path.stat().st_size / 1024:.2f} KB")
+            if verbose:
+                logger.success(f"✅ 初始化缓存已创建: {cache_path}")
+                if tag:
+                    logger.info(f"  • 工作流标识: tag={tag}")
+                logger.info(f"  • 场景: {dyn_params.get('scenario')}")
+                logger.info(f"  • 文件大小: {cache_path.stat().st_size / 1024:.2f} KB")
             return cache_path
         except Exception as e:
             logger.error(f"❌ 初始化缓存失败: {e}")

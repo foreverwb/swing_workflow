@@ -196,6 +196,12 @@ class AnalyzeCommand(BaseCommand):
         dyn_params = kwargs.get('dyn_params')
         tag = kwargs.get('tag')
         bridge = kwargs.get("bridge") or self.env_vars.get("bridge")
+        base_input_dir = kwargs.get("base_input_dir", Path("data/input"))
+        template_date_str = kwargs.get("template_date_str")
+        output_date = kwargs.get("output_date") or self.env_vars.get("start_date")
+        show_command_list = kwargs.get("show_command_list", True)
+        compact_output = kwargs.get("compact_output", False)
+        show_precalc_log = kwargs.get("show_precalc_log", not compact_output)
 
         # 确保 env_vars 中的上下文是最新的
         self.env_vars["symbol"] = symbol
@@ -205,6 +211,8 @@ class AnalyzeCommand(BaseCommand):
             self.env_vars["dyn_params"] = dyn_params
         if bridge:
             self.env_vars["bridge"] = bridge
+        if output_date:
+            self.env_vars["start_date"] = output_date
         
         # 3. 路由逻辑
         
@@ -223,12 +231,23 @@ class AnalyzeCommand(BaseCommand):
                     hv20=market_params['hv20'],
                     term_structure=(bridge or {}).get("term_structure") if bridge else None,
                 )
-                logger.info(f"✅ 市场状态计算完成: {pre_calc_params['scenario']}")
+                if show_precalc_log:
+                    logger.info(f"✅ 市场状态计算完成: {pre_calc_params['scenario']}")
             except ValueError as e:
                 self.print_error(f"市场参数验证失败: {e}")
                 sys.exit(1)
             
-            return self._generate_command_list(symbol, pre_calc_params, tag=tag, bridge=bridge)
+            return self._generate_command_list(
+                symbol,
+                pre_calc_params,
+                tag=tag,
+                bridge=bridge,
+                base_input_dir=base_input_dir,
+                template_date_str=template_date_str,
+                output_date=output_date,
+                show_command_list=show_command_list,
+                compact_output=compact_output,
+            )
         
         # [Mode C] 直接文件分析 (有 JSON 输入, Phase 3 New)
         elif input_file:
@@ -265,7 +284,8 @@ class AnalyzeCommand(BaseCommand):
                 mode=mode,
                 cache=cache,
                 pre_calc=pre_calc_params,
-                market_params=market_params
+                market_params=market_params,
+                output_date=output_date,
             )
 
     def _execute_file_analysis(
@@ -429,7 +449,18 @@ class AnalyzeCommand(BaseCommand):
             self.console.print(traceback.format_exc())
             sys.exit(1)
     
-    def _generate_command_list(self, symbol: str, pre_calc: Dict, tag: str = None, bridge: Dict[str, Any] | None = None) -> Dict[str, Any]:
+    def _generate_command_list(
+        self,
+        symbol: str,
+        pre_calc: Dict,
+        tag: str = None,
+        bridge: Dict[str, Any] | None = None,
+        base_input_dir: Path = Path("data/input"),
+        template_date_str: str | None = None,
+        output_date: str | None = None,
+        show_command_list: bool = True,
+        compact_output: bool = False,
+    ) -> Dict[str, Any]:
         """生成命令清单 (包含输入模板生成)"""
         term_label = pre_calc.get("term_structure_label")
         term_bias = pre_calc.get("term_structure_bias")
@@ -446,97 +477,146 @@ class AnalyzeCommand(BaseCommand):
             b_long = float(hb.get("long", 1.0) or 1.0)
             term_line = f"{term_line} | Term: {term_label or 'N/A'} (short={b_short:.2f}, mid={b_mid:.2f}, long={b_long:.2f})"
 
-        self.console.print(Panel.fit(
-            f"[bold green]📋 生成命令清单: {symbol.upper()}[/bold green]\n"
-            f"[dim]{term_line}[/dim]\n"
-            f"[dim]动态参数: Strikes={pre_calc['dyn_strikes']} DTE={pre_calc['dyn_dte_mid']} Window={pre_calc['dyn_window']}[/dim]",
-            border_style="green"
-        ))
+        if not compact_output:
+            self.console.print(Panel.fit(
+                f"[bold green]📋 生成命令清单: {symbol.upper()}[/bold green]\n"
+                f"[dim]{term_line}[/dim]\n"
+                f"[dim]动态参数: Strikes={pre_calc['dyn_strikes']} DTE={pre_calc['dyn_dte_mid']} Window={pre_calc['dyn_window']}[/dim]",
+                border_style="green"
+            ))
         
         market_params = self.env_vars.get('market_params', {})
         
         try:
-            with Progress(
-                SpinnerColumn(),
-                TextColumn("[progress.description]{task.description}"),
-                console=self.console
-            ) as progress:
-                task = progress.add_task("正在生成命令清单...", total=None)
-                
-                generator = CommandListGenerator()
+            generator = CommandListGenerator()
+            if compact_output:
                 result = generator.generate(
                     symbol=symbol.upper(),
                     pre_calc=pre_calc,
                     market_params=market_params
                 )
-                
-                progress.update(task, completed=True)
+            else:
+                with Progress(
+                    SpinnerColumn(),
+                    TextColumn("[progress.description]{task.description}"),
+                    console=self.console
+                ) as progress:
+                    task = progress.add_task("正在生成命令清单...", total=None)
+                    result = generator.generate(
+                        symbol=symbol.upper(),
+                        pre_calc=pre_calc,
+                        market_params=market_params
+                    )
+                    progress.update(task, completed=True)
             
             content = result.get("content", "")
             summary = result.get("summary", {})
             
-            self.console.print("\n[green]✅ 动态命令清单生成完成![/green]\n")
-            self.console.print(f"[dim]   共生成 {summary.get('total_commands', 0)} 条命令[/dim]")
-            self.console.print(Panel(
-                content,
-                title=f"📋 {symbol.upper()} 数据抓取命令清单",
-                border_style="green"
-            ))
+            if not compact_output:
+                self.console.print("\n[green]✅ 动态命令清单生成完成![/green]\n")
+                self.console.print(f"[dim]   共生成 {summary.get('total_commands', 0)} 条命令[/dim]")
+                if show_command_list:
+                    self.console.print(Panel(
+                        content,
+                        title=f"📋 {symbol.upper()} 数据抓取命令清单",
+                        border_style="green"
+                    ))
+                else:
+                    self.console.print("[dim]   已省略命令清单控制台输出[/dim]")
             
             # [Restored] 生成输入文件模板
-            self.console.print("\n[yellow]📝 生成输入文件模板...[/yellow]")
-            template_path = self._generate_input_template(symbol, pre_calc, market_params)
-            if template_path:
+            if not compact_output:
+                self.console.print("\n[yellow]📝 生成输入文件模板...[/yellow]")
+            template_path = self._generate_input_template(
+                symbol,
+                pre_calc,
+                market_params,
+                base_input_dir=base_input_dir,
+                template_date_str=template_date_str,
+            )
+            if template_path and not compact_output:
                 self.console.print(f"[green]✅ 模板已生成: {template_path}[/green]")
                 self.console.print(f"[dim]   请填充数据后使用 'refresh' 命令[/dim]")
             
-            self.console.print("\n[yellow]💾 初始化缓存文件...[/yellow]")
+            if not compact_output:
+                self.console.print("\n[yellow]💾 初始化缓存文件...[/yellow]")
             cache_manager = CacheManager()
         
             cache_path = cache_manager.initialize_cache_with_params(
                 symbol=symbol.upper(),
                 market_params=market_params,
                 dyn_params=pre_calc,
-                tag=tag
+                start_date=output_date,
+                tag=tag,
+                verbose=not compact_output,
+            )
+            cache_filename = Path(cache_path).name if cache_path else None
+            analysis_command = self._build_analysis_command(
+                symbol=symbol.upper(),
+                tag=tag,
+                cache_filename=cache_filename,
+                cli_date=self._resolve_cli_date_for_hint(template_date_str, output_date),
             )
             if cache_path:
-                cache_filename = Path(cache_path).name
-                self.console.print(f"[green]✅ 缓存已创建: {cache_path}[/green]")
-                if tag:
-                    self.console.print(f"[dim]   工作流标识: tag={tag}[/dim]")
-                
-                self.console.print(f"\n[yellow]💡 提示：抓取数据后，请使用以下命令执行分析:[/yellow]")
-                if tag == 'Meso':
-                    self.console.print(
-                        f"[cyan]   python app.py q {symbol.upper()} -v <VIX> -f <Folder> -c {cache_filename}[/cyan]"
-                    )
-                else:
-                    self.console.print(
-                        f"[cyan]   python app.py analyze {symbol.upper()} -f <Folder> --cache {cache_filename}[/cyan]"
-                    )
+                if not compact_output:
+                    self.console.print(f"[green]✅ 缓存已创建: {cache_path}[/green]")
+                    if tag:
+                        self.console.print(f"[dim]   工作流标识: tag={tag}[/dim]")
+                    
+                    self.console.print(f"\n[yellow]💡 提示：抓取数据后，请使用以下命令执行分析:[/yellow]")
+                    self.console.print(f"[cyan]   {analysis_command}[/cyan]")
             else:
-                self.console.print("[red]⚠️ 缓存初始化失败（可能已存在）[/red]")
+                if not compact_output:
+                    self.console.print("[red]⚠️ 缓存初始化失败（可能已存在）[/red]")
             
             return {
                 "status": "success", 
                 "content": content, 
                 "pre_calc": pre_calc,
                 "cache_path": str(cache_path) if cache_path else None,
-                "template_path": template_path
+                "template_path": template_path,
+                "analysis_command": analysis_command,
             }
         
         except Exception as e:
             self.print_error(str(e))
             sys.exit(1)
 
-    def _generate_input_template(self, symbol: str, pre_calc: Dict, market_params: Dict) -> str:
+    @staticmethod
+    def _resolve_cli_date_for_hint(template_date_str: str | None, output_date: str | None) -> str:
+        """将日期提示统一为 YYYY-MM-DD。"""
+        if template_date_str:
+            return template_date_str
+
+        if output_date and len(output_date) == 8 and output_date.isdigit():
+            return f"{output_date[0:4]}-{output_date[4:6]}-{output_date[6:8]}"
+
+        return "<YYYY-MM-DD>"
+
+    @staticmethod
+    def _build_analysis_command(symbol: str, tag: str, cache_filename: str | None, cli_date: str) -> str:
+        """构建后续分析命令提示。"""
+        cache_arg = cache_filename or "<CACHE>"
+        if tag == 'Meso':
+            return f"python app.py quick {symbol} -d {cli_date} -v <VIX> -f <Folder> -c {cache_arg}"
+        return f"python app.py analyze {symbol} -f <Folder> --cache {cache_arg}"
+
+    def _generate_input_template(
+        self,
+        symbol: str,
+        pre_calc: Dict,
+        market_params: Dict,
+        base_input_dir: Path = Path("data/input"),
+        template_date_str: str | None = None,
+    ) -> str:
         """[恢复] 生成标准输入文件模板"""
         from schemas.agent3_schema import get_schema
         
-        input_dir = Path("data/input")
+        input_dir = Path(base_input_dir)
         input_dir.mkdir(parents=True, exist_ok=True)
         
-        filename = f"{symbol.lower()}_i_{datetime.now().strftime('%Y%m%d')}.json"
+        date_str = template_date_str or datetime.now().strftime('%Y%m%d')
+        filename = f"{symbol.lower()}_i_{date_str}.json"
         filepath = input_dir / filename
         
         # 从 schema 自动生成 spec 结构
@@ -596,7 +676,8 @@ class AnalyzeCommand(BaseCommand):
         mode: str,
         cache: str,
         pre_calc: Dict,
-        market_params: Dict = None
+        market_params: Dict = None,
+        output_date: str | None = None,
     ) -> Dict[str, Any]:
         """执行完整视觉分析"""
         if mode == 'update' and not cache:
@@ -626,6 +707,8 @@ class AnalyzeCommand(BaseCommand):
             self.print_error(msg)
             sys.exit(1)
         
+        if output_date:
+            self.env_vars["start_date"] = output_date
         engine = self.create_engine(cache_file=cache)
         if not market_params:
             market_params = self.env_vars.get('market_params', {})

@@ -153,8 +153,8 @@ class VAClient:
         return data['params']
     
     def get_params_batch(
-        self, 
-        symbols: List[str], 
+        self,
+        symbols: List[str],
         vix: float = None,
         date: str = None
     ) -> Dict[str, Dict[str, Any]]:
@@ -188,11 +188,48 @@ class VAClient:
             raise VAClientError(data.get('error', 'Unknown error'))
         
         # 记录错误
-        if data.get('errors'):
-            for sym, err in data['errors'].items():
-                logger.warning(f"获取 {sym} 参数失败: {err}")
+        errors = data.get("errors")
+        if errors:
+            if isinstance(errors, dict):
+                for sym, err in errors.items():
+                    logger.warning(f"获取 {sym} 参数失败: {err}")
+            elif isinstance(errors, list):
+                for item in errors:
+                    if isinstance(item, dict):
+                        sym = str(item.get("symbol") or item.get("ticker") or "UNKNOWN").upper()
+                        err = item.get("error") or item.get("message") or item
+                        logger.warning(f"获取 {sym} 参数失败: {err}")
+                    else:
+                        logger.warning(f"批量参数错误: {item}")
         
-        return data.get('results', {})
+        raw_results = data.get('results', {})
+        if isinstance(raw_results, dict):
+            return raw_results
+
+        # 兼容部分服务返回 list 结构
+        if isinstance(raw_results, list):
+            normalized: Dict[str, Dict[str, Any]] = {}
+            for row in raw_results:
+                if not isinstance(row, dict):
+                    continue
+
+                symbol = str(row.get("symbol") or "").strip().upper()
+                if not symbol:
+                    continue
+
+                if isinstance(row.get("params"), dict):
+                    normalized[symbol] = row["params"]
+                elif isinstance(row.get("market_params"), dict):
+                    normalized[symbol] = row["market_params"]
+                else:
+                    normalized[symbol] = {
+                        key: value
+                        for key, value in row.items()
+                        if key not in ("symbol", "bridge", "snapshot")
+                    }
+            return normalized
+
+        return {}
 
     def fetch_market_context(
         self,
@@ -245,6 +282,185 @@ class VAClient:
             "market_params": market_params,
             "bridge": bridge,
         }
+
+    def fetch_market_context_batch(
+        self,
+        date: str,
+        source: str = "swing",
+        vix: float | None = None,
+        symbols: List[str] | None = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        批量获取市场上下文，优先 bridge batch，失败时退化到 swing batch。
+        返回统一结构:
+        [
+          {"symbol": "NVDA", "market_params": {...}, "bridge": {...}|None}
+        ]
+        """
+        payload = {
+            "date": date,
+            "source": source,
+        }
+        if vix is not None:
+            payload["vix"] = vix
+        if symbols:
+            payload["symbols"] = [str(s).upper() for s in symbols if str(s).strip()]
+
+        # 1) 优先 bridge batch
+        try:
+            data = self._make_request("POST", "/api/bridge/batch", json=payload)
+            # 业务约定：bridge batch 返回 count=0 时视为“无任务”，直接返回空结果
+            if isinstance(data, dict):
+                count = data.get("count")
+                if count is not None:
+                    try:
+                        if int(count) == 0:
+                            return []
+                    except (TypeError, ValueError):
+                        pass
+            normalized = self._normalize_batch_response(data)
+            if normalized:
+                return normalized
+        except VAClientError as e:
+            logger.warning(f"/api/bridge/batch 不可用，尝试 swing batch: {e}")
+
+        # 2) 尝试 swing batch（如果服务支持无 symbols 的批量入口）
+        try:
+            data = self._make_request("POST", "/api/swing/params/batch", json=payload)
+            normalized = self._normalize_batch_response(data)
+            if normalized:
+                return normalized
+        except VAClientError as e:
+            logger.warning(f"无 symbols 的 swing batch 不可用，回退 list_symbols+batch: {e}")
+
+        # 3) 回退：先拉 symbols，再调用已存在的 swing params batch
+        target_symbols = symbols or self.list_symbols()
+        if not target_symbols:
+            raise VAClientError("批量请求失败: 无可用 symbols")
+
+        results = self.get_params_batch(symbols=target_symbols, vix=vix, date=date)
+        fallback_rows = self._to_market_context_rows(results)
+        if fallback_rows:
+            return fallback_rows
+
+        raise VAClientError("批量请求失败: 返回结果为空或格式不兼容")
+
+    def _normalize_batch_response(self, data: Any) -> List[Dict[str, Any]]:
+        """将多种批量响应格式归一化为统一列表结构"""
+        if not data:
+            return []
+
+        if isinstance(data, dict) and data.get("success") is False:
+            raise VAClientError(data.get("error", "Unknown error"))
+
+        payload = data
+        if isinstance(data, dict):
+            for key in ("results", "items", "data", "snapshots", "batch"):
+                if key in data and data.get(key) is not None:
+                    payload = data.get(key)
+                    break
+
+        rows = self._coerce_rows(payload)
+        normalized_rows = []
+
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+
+            symbol = str(row.get("symbol") or "").strip().upper()
+            if not symbol:
+                continue
+
+            entry = dict(row)
+            entry["symbol"] = symbol
+            normalized_rows.append(entry)
+
+        return normalized_rows
+
+    def _coerce_rows(self, payload: Any) -> List[Dict[str, Any]]:
+        """将 list/dict 映射为统一 row 列表"""
+        if isinstance(payload, list):
+            return payload
+
+        if not isinstance(payload, dict):
+            return []
+
+        # 形如 {"NVDA": {...}, "AAPL": {...}}
+        if payload and all(isinstance(v, dict) for v in payload.values()):
+            if "symbol" in payload and any(k in payload for k in ("market_params", "bridge", "params", "snapshot")):
+                return [payload]
+
+            rows = []
+            for symbol, item in payload.items():
+                row = dict(item)
+                row.setdefault("symbol", symbol)
+                rows.append(row)
+            return rows
+
+        # 单对象场景
+        if "symbol" in payload:
+            return [payload]
+
+        return []
+
+    def _to_market_context_rows(self, results: Any) -> List[Dict[str, Any]]:
+        """
+        将 batch 结果（dict/list）转换为标准 market context 行。
+        标准格式:
+        [{"symbol": "NVDA", "market_params": {...}, "bridge": {...}|None}]
+        """
+        rows: List[Dict[str, Any]] = []
+
+        if isinstance(results, dict):
+            iterable = results.items()
+            for symbol, item in iterable:
+                symbol_str = str(symbol or "").strip().upper()
+                if not symbol_str or not isinstance(item, dict):
+                    continue
+
+                if isinstance(item.get("market_params"), dict):
+                    market_params = item["market_params"]
+                elif isinstance(item.get("params"), dict):
+                    market_params = item["params"]
+                else:
+                    market_params = item
+
+                bridge = item.get("bridge") if isinstance(item.get("bridge"), dict) else None
+                rows.append({
+                    "symbol": symbol_str,
+                    "market_params": market_params,
+                    "bridge": bridge,
+                })
+            return rows
+
+        if isinstance(results, list):
+            for row in results:
+                if not isinstance(row, dict):
+                    continue
+
+                symbol = str(row.get("symbol") or "").strip().upper()
+                if not symbol:
+                    continue
+
+                if isinstance(row.get("market_params"), dict):
+                    market_params = row["market_params"]
+                elif isinstance(row.get("params"), dict):
+                    market_params = row["params"]
+                else:
+                    market_params = {
+                        key: value
+                        for key, value in row.items()
+                        if key not in ("symbol", "bridge", "snapshot")
+                    }
+
+                bridge = row.get("bridge") if isinstance(row.get("bridge"), dict) else None
+                rows.append({
+                    "symbol": symbol,
+                    "market_params": market_params,
+                    "bridge": bridge,
+                })
+
+        return rows
     
     def list_symbols(self) -> List[str]:
         """

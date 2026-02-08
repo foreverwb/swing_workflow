@@ -30,7 +30,8 @@ class WorkflowEngine:
         self.env_vars = {
             'market_params': env_vars.get('market_params', {}),
             'dyn_params': env_vars.get('dyn_params', {}),
-            'event_data': env_vars.get('event_data', {})
+            'event_data': env_vars.get('event_data', {}),
+            'start_date': env_vars.get('start_date'),
         }
         
         self.cache_file = cache_file  # 新增：支持指定缓存文件

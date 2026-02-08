@@ -168,6 +168,8 @@ class AnalysisPipeline:
         if self.cache_file:
             match = re.match(r'(\w+)_o_(\d{8})\.json', self.cache_file)
             if match: start_date = match.group(2)
+        if not start_date:
+            start_date = self.env_vars.get("start_date")
         
         html_kwargs = dict(self.env_vars)
         html_kwargs.update({
@@ -189,9 +191,18 @@ class AnalysisPipeline:
     
     def _step_save_results(self, context: Dict) -> Dict:
         symbol = context["symbol"]
+        start_date_hint = self.env_vars.get("start_date")
         # 保存参数
         if self.market_params:
-            self.cache_manager.save_market_params(symbol, self.market_params, self.dyn_params, self.cache_file)
+            if self.cache_file:
+                self.cache_manager.save_market_params(symbol, self.market_params, self.dyn_params, self.cache_file)
+            else:
+                self.cache_manager.save_market_params(
+                    symbol,
+                    self.market_params,
+                    self.dyn_params,
+                    start_date=start_date_hint
+                )
         
         # [Critical] 确保传递 strategies 给 save_complete_analysis
         self.cache_manager.save_complete_analysis(
@@ -201,6 +212,7 @@ class AnalysisPipeline:
             strategies=context["strategies_result"], # 确保此字段非空
             ranking=context["comparison_data"],
             report=context["final_report"],
+            start_date=start_date_hint,
             cache_file=self.cache_file,
             market_params=self.market_params,
             dyn_params=self.dyn_params

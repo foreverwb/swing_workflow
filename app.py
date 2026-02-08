@@ -8,6 +8,7 @@ Swing Quant Workflow - 主程序入口
 - analyze NVDA -p params.json          # 生成命令清单
 - analyze NVDA -f ./data --cache XX    # 完整分析
 - quick NVDA                           # 快速分析（自动获取参数）
+- mass -d 2026-01-04                    # 批量准备输入模板
 - refresh NVDA -f ./data --cache XX    # 刷新快照
 """
 
@@ -28,13 +29,13 @@ os.chdir(PROJECT_ROOT)
 console = Console()
 
 
-def setup_logging():
+def setup_logging(level: str = "INFO"):
     """配置日志"""
     logger.remove()
     logger.add(
         sys.stderr,
         format="<green>{time:HH:mm:ss}</green> | <level>{level: <8}</level> | <level>{message}</level>",
-        level="INFO"
+        level=level
     )
 
 
@@ -52,6 +53,7 @@ def cli():
     命令列表:
       analyze   完整分析或生成命令清单
       quick     快速分析（自动获取参数）
+      mass      批量准备命令清单和输入模板
       refresh   刷新快照（盘中更新）
       params    生成参数模板
     
@@ -116,7 +118,7 @@ def analyze(symbol: str, folder: str, input_file: str, params_input: str, cache:
 @cli.command(name='quick')
 @click.argument('symbol')
 @click.option('-v', '--vix', type=float, help='VIX 指数（可选）')
-@click.option('-t', '--target-date', 'target_date', help='目标日期 (YYYY-MM-DD)')
+@click.option('-t', '--target-date', '-d', '--date', 'target_date', help='目标日期 (YYYY-MM-DD)')
 @click.option('-f', '--folder', type=click.Path(exists=True), help='数据文件夹路径')
 @click.option('-c', '--cache', help='缓存文件名')
 @click.option('-o', '--output', type=click.Path(), help='输出文件路径')
@@ -143,6 +145,37 @@ def quick(symbol: str, vix: float, target_date: str, folder: str, cache: str, ou
         folder=folder,
         cache=cache,
         output=output,
+        va_url=va_url,
+        model_config=model_config,
+        console=console
+    )
+
+
+# ============================================================
+# mass 命令
+# ============================================================
+
+@cli.command(name='mass')
+@click.option('-d', '--date', 'target_date', default=None, help='目标日期 (YYYY-MM-DD)，默认当天')
+@click.option('-s', '--symbol', 'symbols', multiple=True, help='指定 symbol，可重复或逗号分隔')
+@click.option('--va-url', default='http://localhost:8668', help='VA API 服务地址')
+@click.option('--model-config', default=DEFAULT_MODEL_CONFIG, help='模型配置文件')
+def mass(target_date: str, symbols: tuple[str, ...], va_url: str, model_config: str):
+    """
+    批量准备命令 - 为指定日期批量生成命令清单与输入模板
+
+    \b
+    示例:
+      mass -d 2026-01-04
+      mass -d 2026-01-04 -s NVDA -s AAPL
+      mass -s NVDA,MSFT
+    """
+    setup_logging(level="WARNING")
+
+    from commands import MassCommand
+    MassCommand.cli_entry(
+        target_date=target_date,
+        symbols=list(symbols),
         va_url=va_url,
         model_config=model_config,
         console=console
