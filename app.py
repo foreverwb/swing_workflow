@@ -122,7 +122,7 @@ def analyze(symbol: str, folder: str, input_file: str, params_input: str, cache:
 @click.option('-f', '--folder', type=click.Path(exists=True), help='数据文件夹路径')
 @click.option('-c', '--cache', help='缓存文件名')
 @click.option('-o', '--output', type=click.Path(), help='输出文件路径')
-@click.option('--va-url', default='http://localhost:8668', help='VA API 服务地址')
+@click.option('--va-url', default=None, help='VA API 服务地址')
 @click.option('--model-config', default=DEFAULT_MODEL_CONFIG, help='模型配置文件')
 def quick(symbol: str, vix: float, target_date: str, folder: str, cache: str, output: str, va_url: str, model_config: str):
     """
@@ -158,7 +158,7 @@ def quick(symbol: str, vix: float, target_date: str, folder: str, cache: str, ou
 @cli.command(name='mass')
 @click.option('-d', '--date', 'target_date', default=None, help='目标日期 (YYYY-MM-DD)，默认当天')
 @click.option('-s', '--symbol', 'symbols', multiple=True, help='指定 symbol，可重复或逗号分隔')
-@click.option('--va-url', default='http://localhost:8668', help='VA API 服务地址')
+@click.option('--va-url', default=None, help='VA API 服务地址')
 @click.option('--model-config', default=DEFAULT_MODEL_CONFIG, help='模型配置文件')
 def mass(target_date: str, symbols: tuple[str, ...], va_url: str, model_config: str):
     """

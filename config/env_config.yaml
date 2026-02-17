@@ -363,6 +363,16 @@ beta:
   # 默认值（当无法确定时使用）
   default_beta: 1.0
 
+# ======================================
+# Bridge Provider 配置
+# ======================================
+bridge_provider:
+  # Bridge 服务 URL — 切换到 options_provider
+  url: "http://localhost:9988"
+  # 回退 URL（options_provider 不可用时尝试 VA 直连）
+  fallback_url: "http://localhost:8668"
+  timeout: 10
+
 reporting:
   ticker_domains:
     TSLA: "tesla.com"
