@@ -1,6 +1,6 @@
 """
 VA / Bridge Provider Client — swing_workflow
-v2.0: 配置化 bridge provider URL, execution_state 字段支持
+v2.1: 全量收敛到 /api/bridge/batch（source=swing）并做协议强校验
 """
 
 import os
@@ -8,6 +8,7 @@ import logging
 import yaml
 import httpx
 from typing import Optional, Dict, Any, List
+from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
 
@@ -16,6 +17,66 @@ CONFIG_PATH = os.path.join(os.path.dirname(__file__), "..", "config", "env_confi
 
 # 请求来源标识 — option_provider 日志中显示为 [swing]
 REQUEST_SOURCE = "swing"
+SWING_MARKET_PARAM_FIELDS = (
+    "vix",
+    "ivr",
+    "iv30",
+    "hv20",
+    "iv_path",
+    "earning_date",
+    "beta",
+)
+
+
+class VAClientError(RuntimeError):
+    """Base error for VAClient failures."""
+
+
+class VAClientRequestError(VAClientError):
+    """HTTP transport/request error."""
+
+
+class VAClientProtocolError(VAClientError):
+    """Raised when API response violates expected contract."""
+
+
+def parse_swing_batch_rows(results: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    """
+    将 batch results(list) 解析为 {SYMBOL: {"market_params": ..., "bridge": ...}}。
+
+    协议约束:
+    - results 必须是 list
+    - 每个 row 必须包含 symbol(str), market_params(dict), bridge(dict)
+    """
+    if not isinstance(results, list):
+        raise VAClientProtocolError("Protocol violation: 'results' must be a list")
+
+    parsed: Dict[str, Dict[str, Any]] = {}
+    for idx, row in enumerate(results):
+        if not isinstance(row, dict):
+            raise VAClientProtocolError(f"Batch row[{idx}] must be an object")
+
+        symbol = row.get("symbol")
+        if not isinstance(symbol, str) or not symbol.strip():
+            raise VAClientProtocolError(f"Batch row[{idx}] missing valid 'symbol'")
+
+        market_params = row.get("market_params")
+        if not isinstance(market_params, dict):
+            raise VAClientProtocolError(
+                f"Batch row[{idx}] missing required 'market_params' object"
+            )
+
+        bridge = row.get("bridge")
+        if not isinstance(bridge, dict):
+            raise VAClientProtocolError(
+                f"Batch row[{idx}] missing required 'bridge' object"
+            )
+
+        parsed[symbol.strip().upper()] = {
+            "market_params": market_params,
+            "bridge": bridge,
+        }
+    return parsed
 
 
 class VAClient:
@@ -95,6 +156,20 @@ class VAClient:
     # HTTP 请求（带来源标识 + fallback）
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _resolve_trust_env(url: str, explicit_trust_env: Optional[bool] = None) -> bool:
+        """
+        Disable proxy env for localhost/loopback by default.
+        This avoids local provider requests being routed to corporate HTTP proxies.
+        """
+        if explicit_trust_env is not None:
+            return explicit_trust_env
+
+        host = urlparse(url).hostname
+        if host in {"localhost", "127.0.0.1", "::1"}:
+            return False
+        return True
+
     def _request(self, method: str, path: str, **kwargs) -> httpx.Response:
         """
         发送请求，自动附加 X-Request-Source 头。
@@ -102,12 +177,18 @@ class VAClient:
         """
         headers = kwargs.pop("headers", {})
         headers["X-Request-Source"] = self.source
+        explicit_trust_env = kwargs.pop("trust_env", None)
 
         url = f"{self.base_url}{path}"
         try:
             logger.debug(f"[swing] {method.upper()} {url}")
             resp = httpx.request(
-                method, url, headers=headers, timeout=self.timeout, **kwargs
+                method,
+                url,
+                headers=headers,
+                timeout=self.timeout,
+                trust_env=self._resolve_trust_env(url, explicit_trust_env),
+                **kwargs,
             )
             resp.raise_for_status()
             return resp
@@ -117,52 +198,104 @@ class VAClient:
                 fallback = f"{self.fallback_url}{path}"
                 logger.info(f"[swing] 尝试 fallback: {fallback}")
                 resp = httpx.request(
-                    method, fallback, headers=headers, timeout=self.timeout, **kwargs
+                    method,
+                    fallback,
+                    headers=headers,
+                    timeout=self.timeout,
+                    trust_env=self._resolve_trust_env(fallback, explicit_trust_env),
+                    **kwargs,
                 )
                 resp.raise_for_status()
                 return resp
             raise
 
+    def _request_json(self, method: str, path: str, **kwargs) -> Any:
+        try:
+            resp = self._request(method, path, **kwargs)
+            return resp.json()
+        except (httpx.HTTPError, httpx.ConnectError) as exc:
+            raise VAClientRequestError(str(exc)) from exc
+        except ValueError as exc:
+            raise VAClientProtocolError(f"Invalid JSON from {path}: {exc}") from exc
+
     # ------------------------------------------------------------------
     # Bridge API 调用
     # ------------------------------------------------------------------
 
-    def fetch_bridge_snapshot(self, symbol: str, **params) -> Optional[Dict[str, Any]]:
-        """获取单个 symbol 的 bridge 快照"""
-        try:
-            resp = self._request("GET", f"/api/bridge/snapshot/{symbol}", params=params)
-            data = resp.json()
-            logger.info(f"[swing] bridge snapshot 获取成功: {symbol}")
-            return data
-        except Exception as e:
-            logger.error(f"[swing] bridge snapshot 获取失败 {symbol}: {e}")
-            return None
-
     def fetch_bridge_batch(
-        self, symbols: List[str], date: Optional[str] = None, **params
+        self,
+        source: str = REQUEST_SOURCE,
+        date: Optional[str] = None,
+        symbols: Optional[List[str]] = None,
+        **kwargs,
     ) -> Dict[str, Any]:
-        """批量获取 bridge 数据"""
-        body: Dict[str, Any] = {"symbols": symbols}
+        """
+        统一批量入口：POST /api/bridge/batch
+
+        强制协议:
+        - 响应必须是 dict
+        - results 必须是 list（否则抛 VAClientProtocolError）
+        """
+        body: Dict[str, Any] = {"source": source}
         if date:
             body["date"] = date
-        body.update(params)
+        if symbols is not None:
+            body["symbols"] = symbols
+        body.update(kwargs)
 
+        data = self._request_json("POST", "/api/bridge/batch", json=body)
+        if not isinstance(data, dict):
+            raise VAClientProtocolError("Batch response must be an object")
+        results = data.get("results", [])
+        if not isinstance(results, list):
+            raise VAClientProtocolError("Protocol violation: 'results' must be a list")
+        data["results"] = results
+        logger.info(f"[swing] bridge batch 获取成功: source={source} count={len(results)}")
+        return data
+
+    def fetch_bridge_snapshot(self, symbol: str, **params) -> Optional[Dict[str, Any]]:
+        """
+        兼容方法（不再走单条端点）。
+        内部改为 batch(symbols=[symbol], source=swing)。
+        """
+        source = params.pop("source", REQUEST_SOURCE)
+        date = params.pop("date", None)
         try:
-            resp = self._request("POST", "/api/bridge/batch", json=body)
-            data = resp.json()
-            logger.info(f"[swing] bridge batch 获取成功: {len(symbols)} symbols")
-            return data
-        except Exception as e:
-            logger.error(f"[swing] bridge batch 获取失败: {e}")
-            return {"results": {}, "errors": [str(e)]}
+            data = self.fetch_bridge_batch(source=source, date=date, symbols=[symbol], **params)
+            rows = data.get("results", [])
+            if not rows:
+                return None
+            row = rows[0]
+            if isinstance(row, dict) and isinstance(row.get("bridge"), dict):
+                return row["bridge"]
+            if isinstance(row, dict):
+                return row
+            raise VAClientProtocolError("Batch row must be an object")
+        except VAClientError as e:
+            logger.error(f"[swing] bridge snapshot(batch-compat) 获取失败 {symbol}: {e}")
+            return None
 
     def fetch_bridge_params(self, symbol: str) -> Optional[Dict[str, Any]]:
-        """获取 swing params"""
+        """
+        兼容方法（不再走 /params 主路径）。
+        返回 batch 行内 market_params（若存在）。
+        """
         try:
-            resp = self._request("GET", f"/api/bridge/params/{symbol}")
-            return resp.json()
-        except Exception as e:
-            logger.error(f"[swing] bridge params 获取失败 {symbol}: {e}")
+            data = self.fetch_bridge_batch(source=REQUEST_SOURCE, symbols=[symbol])
+            rows = data.get("results", [])
+            if not rows:
+                return None
+            row = rows[0]
+            if isinstance(row, dict):
+                market_params = row.get("market_params")
+                if isinstance(market_params, dict):
+                    return market_params
+                if isinstance(row.get("bridge"), dict):
+                    return row["bridge"]
+                return row
+            raise VAClientProtocolError("Batch row must be an object")
+        except VAClientError as e:
+            logger.error(f"[swing] bridge params(batch-compat) 获取失败 {symbol}: {e}")
             return None
 
     # ------------------------------------------------------------------
@@ -198,34 +331,64 @@ class VAClient:
 
     def fetch_market_context(self, symbol: str, **params) -> Dict[str, Any]:
         """
-        获取完整市场上下文，包含 execution_state
+        获取单 symbol 市场上下文（主流程改为 batch 路径）。
         """
-        bridge = self.fetch_bridge_snapshot(symbol, **params)
-        if not bridge:
+        source = params.pop("source", REQUEST_SOURCE)
+        date = params.pop("date", None)
+        batch_resp = self.fetch_bridge_batch(source=source, date=date, symbols=[symbol], **params)
+        rows = batch_resp.get("results", [])
+        parsed = parse_swing_batch_rows(rows)
+        if not parsed:
             return {"symbol": symbol, "error": "bridge data unavailable"}
+
+        first_symbol = next(iter(parsed))
+        bridge = parsed[first_symbol]["bridge"]
 
         execution_state = self.extract_execution_state(bridge)
         bridge["execution_state"] = execution_state
-
-        logger.info(
-            f"[swing] {symbol} execution_state: "
-            f"confidence={execution_state['confidence']}, "
-            f"liquidity={execution_state['liquidity']}, "
-            f"oi_available={execution_state['oi_data_available']}"
-        )
         return bridge
 
     def fetch_market_context_batch(
-        self, symbols: List[str], date: Optional[str] = None, **params
+        self,
+        symbols: List[str],
+        date: Optional[str] = None,
+        source: str = REQUEST_SOURCE,
+        **params,
     ) -> Dict[str, Any]:
         """
-        批量获取市场上下文，每条结果附加 execution_state
+        批量获取市场上下文，每条 row.bridge 附加 execution_state。
         """
-        batch_resp = self.fetch_bridge_batch(symbols, date=date, **params)
-        results = batch_resp.get("results", {})
-
-        for sym, bridge in results.items():
-            if isinstance(bridge, dict) and "error" not in bridge:
+        batch_resp = self.fetch_bridge_batch(
+            source=source,
+            date=date,
+            symbols=symbols,
+            **params,
+        )
+        parsed = parse_swing_batch_rows(batch_resp.get("results", []))
+        for payload in parsed.values():
+            bridge = payload["bridge"]
+            if "error" not in bridge:
                 bridge["execution_state"] = self.extract_execution_state(bridge)
 
         return batch_resp
+
+    def get_params_batch(
+        self,
+        symbols: List[str],
+        date: Optional[str] = None,
+        **params,
+    ) -> Dict[str, Dict[str, Any]]:
+        """
+        兼容输出：将 batch list 行转换为 {SYMBOL: market_params} 映射。
+        该方法基于 /api/bridge/batch，不走旧 /params 路径。
+        """
+        batch_resp = self.fetch_bridge_batch(
+            source=REQUEST_SOURCE,
+            date=date,
+            symbols=symbols,
+            **params,
+        )
+        out: Dict[str, Dict[str, Any]] = {}
+        for symbol, payload in parse_swing_batch_rows(batch_resp.get("results", [])).items():
+            out[symbol] = payload["market_params"]
+        return out

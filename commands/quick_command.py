@@ -6,7 +6,12 @@ v2.0: 移除硬编码 VA URL，由 VAClient 配置化解析
 import logging
 from typing import Optional
 
-from utils.va_client import VAClient
+from utils.va_client import (
+    VAClient,
+    REQUEST_SOURCE,
+    SWING_MARKET_PARAM_FIELDS,
+    parse_swing_batch_rows,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -38,11 +43,28 @@ class QuickCommand:
         """执行单 symbol 分析"""
         logger.info(f"[swing] QuickCommand.execute: {symbol}")
 
-        bridge = self.va_client.fetch_market_context(symbol, **kwargs)
+        date = kwargs.pop("target_date", None) or kwargs.pop("date", None)
+        source = kwargs.pop("source", REQUEST_SOURCE)
+        batch_result = self.va_client.fetch_bridge_batch(
+            source=source,
+            date=date,
+            symbols=[symbol],
+            **kwargs,
+        )
+        rows = batch_result.get("results", [])
+        parsed = parse_swing_batch_rows(rows)
+        if not parsed:
+            err = {"symbol": symbol, "error": "bridge data unavailable"}
+            logger.error(f"[swing] {symbol} 获取失败: {err['error']}")
+            return err
 
-        if "error" in bridge:
-            logger.error(f"[swing] {symbol} 获取失败: {bridge['error']}")
-            return bridge
+        first_symbol = next(iter(parsed))
+        payload = parsed[first_symbol]
+        bridge = payload["bridge"]
+        market_params = payload["market_params"]
+        normalized_market_params = {
+            field: market_params.get(field) for field in SWING_MARKET_PARAM_FIELDS
+        }
 
         exec_state = bridge.get("execution_state", {})
         logger.info(
@@ -51,7 +73,11 @@ class QuickCommand:
             f"oi_available={exec_state.get('oi_data_available')}"
         )
 
-        return bridge
+        return {
+            "symbol": first_symbol,
+            "market_params": normalized_market_params,
+            "bridge": bridge,
+        }
 
     @classmethod
     def cli_entry(cls, va_url: Optional[str] = None, symbol: str = "", **kwargs):
