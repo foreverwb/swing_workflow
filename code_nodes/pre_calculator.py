@@ -18,6 +18,7 @@ class MarketStateCalculator:
         iv30: float,
         hv20: float,
         term_structure: dict | None = None,
+        boundary: dict | None = None,
     ) -> Dict[str, any]:
         """
         基于 Alpha-Beta 矩阵解算 Agent2 的抓取参数
@@ -28,6 +29,7 @@ class MarketStateCalculator:
             iv30: 30日隐含波动率 (如 42.8)
             hv20: 20日历史波动率 (如 38.2)
             term_structure: Bridge 下发的期限结构信息（可选）
+            boundary: Bridge 下发的 micro_boundary 约束（可选）
             
         Returns:
             {
@@ -104,6 +106,10 @@ class MarketStateCalculator:
 
         if term_structure:
             params = MarketStateCalculator._apply_term_structure_bias(params, term_structure)
+
+        # 应用 micro_boundary 约束（不影响无 boundary 时的行为）
+        if boundary:
+            params = MarketStateCalculator._apply_boundary_constraints(params, boundary)
 
         return params
     
@@ -200,5 +206,48 @@ class MarketStateCalculator:
             "mid": b_mid,
             "long": b_long,
         }
+
+        return params
+
+    @staticmethod
+    def _apply_boundary_constraints(
+        params: Dict[str, any],
+        boundary: Dict[str, any],
+    ) -> Dict[str, any]:
+        """
+        应用 micro_boundary 约束：
+        1. effective_strikes → 限制 dyn_strikes（只缩不扩）
+        2. swing overlay suggested_dyn_params → 可选参考（min 约束，不放大）
+        3. 记录 boundary 应用状态
+
+        Args:
+            params: 当前计算好的动态参数
+            boundary: micro_boundary 字典
+
+        Returns:
+            约束后的动态参数（原地修改并返回）
+        """
+        if not isinstance(boundary, dict) or not boundary:
+            return params
+
+        # 1. Strikes 上限约束 — effective_strikes 是流动性/OI 综合天花板
+        effective_strikes = boundary.get("effective_strikes")
+        if effective_strikes is not None:
+            current_strikes = params.get("dyn_strikes", 30)
+            params["dyn_strikes"] = min(current_strikes, int(effective_strikes))
+
+        # 2. Swing overlay 参考（如果 bridge 针对 swing 策略有建议值）
+        swing_overlay = (boundary.get("strategy_overlay") or {}).get("swing") or {}
+        suggested = swing_overlay.get("suggested_dyn_params") or {}
+        # 建议值仅作为 min 约束（只缩不扩），避免放大 strikes/window
+        for key in ("dyn_strikes", "dyn_window"):
+            if key in suggested and suggested[key] is not None:
+                current = params.get(key)
+                if current is not None:
+                    params[key] = min(current, suggested[key])
+
+        # 3. 记录 boundary 来源，供下游日志和模板使用
+        params["boundary_applied"] = True
+        params["boundary_mode"] = (boundary.get("degradation") or {}).get("mode", "unknown")
 
         return params

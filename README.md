@@ -171,6 +171,7 @@ python app.py params -o params.json --example
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                    Pre-Calculator - 市场状态计算                              │
 │  计算动态参数：dyn_strikes, dyn_dte, dyn_window, scenario                    │
+│  应用 micro_boundary 约束：strikes 上限、degradation gate                    │
 └───────────────────────────────────┬─────────────────────────────────────────┘
                                     │
                                     ▼
@@ -421,6 +422,8 @@ swing_workflow/
 │   ├── validators.py         # 数据验证
 │   ├── helpers.py            # 辅助函数
 │   └── va_client.py          # VA API 客户端
+├── tests/                    # 测试
+│   └── test_boundary_integration.py  # micro_boundary 集成测试
 ├── logs/                     # 日志目录
 └── data/                     # 数据目录
     ├── output/               # 分析输出
@@ -442,6 +445,9 @@ swing_workflow/
 ```bash
 # 语法检查
 python -m py_compile app.py
+
+# 单元测试（boundary 集成）
+python -m pytest tests/test_boundary_integration.py -v
 
 # 静态分析
 pip install vulture
@@ -479,3 +485,14 @@ MIT License
 - 新增 Drift Engine 盘中监控
 - 优化错误处理和美化输出
 - 修复代码冗余问题
+
+### v2.1.0 (2026-01)
+
+- **[Task 3] micro_boundary 集成**
+  - `MarketStateCalculator.calculate_fetch_params()` 新增 `boundary` 参数，消费 Bridge 下发的 `micro_boundary` 字段
+  - `_apply_boundary_constraints()` 实现 strikes 上限约束（`effective_strikes`）和 swing overlay 建议值约束（只缩不扩）
+  - `MassCommand.execute()` 新增 degradation gate：`blocked` 模式的 symbol 跳过并记录 `BOUNDARY_BLOCKED` 错误
+  - `partial` / `fallback` 模式 symbol 继续执行，strikes/window 受 boundary 约束
+  - 日志增强：输出 `boundary_mode` 和约束后的 `dyn_strikes`
+  - 向后兼容：无 boundary 或 `boundary=None` / `boundary={}` 时行为与改造前完全一致
+  - 新增 `tests/test_boundary_integration.py` 单元测试

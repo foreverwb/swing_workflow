@@ -227,6 +227,24 @@ class MassCommand:
             bridge = payload["bridge"]
             market_params = self._normalize_market_params(payload["market_params"])
 
+            # ★ 提取 micro_boundary
+            micro_boundary = bridge.get("micro_boundary") if isinstance(bridge, dict) else None
+
+            # ★ degradation gate — blocked 模式直接跳过
+            if isinstance(micro_boundary, dict):
+                deg = micro_boundary.get("degradation") or {}
+                deg_mode = deg.get("mode")
+                if deg_mode == "blocked":
+                    deg_warnings = deg.get("warnings", [])
+                    errors.append(
+                        {
+                            "symbol": sym,
+                            "code": "BOUNDARY_BLOCKED",
+                            "message": f"micro_boundary blocked: {'; '.join(deg_warnings) if deg_warnings else 'unknown reason'}",
+                        }
+                    )
+                    continue
+
             required = ["vix", "ivr", "iv30", "hv20"]
             missing = [k for k in required if market_params.get(k) is None]
             if missing:
@@ -246,6 +264,7 @@ class MassCommand:
                     iv30=market_params["iv30"],
                     hv20=market_params["hv20"],
                     term_structure=bridge.get("term_structure") if isinstance(bridge, dict) else None,
+                    boundary=micro_boundary,
                 )
             except Exception as exc:
                 errors.append(
@@ -272,13 +291,15 @@ class MassCommand:
                 verbose=False,
             )
 
-            exec_state = bridge.get("execution_state", {})
+            exec_state = bridge.get("execution_state", {}) if isinstance(bridge, dict) else {}
             logger.info(
-                "[swing] %s: confidence=%s liquidity=%s oi_available=%s input=%s cache=%s",
+                "[swing] %s: confidence=%s liquidity=%s oi_available=%s boundary_mode=%s strikes=%s input=%s cache=%s",
                 sym,
                 exec_state.get("confidence"),
                 exec_state.get("liquidity"),
                 exec_state.get("oi_data_available"),
+                dyn_params.get("boundary_mode", "N/A"),
+                dyn_params.get("dyn_strikes"),
                 input_path,
                 cache_path,
             )

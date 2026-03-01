@@ -253,51 +253,6 @@ class VAClient:
         logger.info(f"[swing] bridge batch 获取成功: source={source} count={len(results)}")
         return data
 
-    def fetch_bridge_snapshot(self, symbol: str, **params) -> Optional[Dict[str, Any]]:
-        """
-        兼容方法（不再走单条端点）。
-        内部改为 batch(symbols=[symbol], source=swing)。
-        """
-        source = params.pop("source", REQUEST_SOURCE)
-        date = params.pop("date", None)
-        try:
-            data = self.fetch_bridge_batch(source=source, date=date, symbols=[symbol], **params)
-            rows = data.get("results", [])
-            if not rows:
-                return None
-            row = rows[0]
-            if isinstance(row, dict) and isinstance(row.get("bridge"), dict):
-                return row["bridge"]
-            if isinstance(row, dict):
-                return row
-            raise VAClientProtocolError("Batch row must be an object")
-        except VAClientError as e:
-            logger.error(f"[swing] bridge snapshot(batch-compat) 获取失败 {symbol}: {e}")
-            return None
-
-    def fetch_bridge_params(self, symbol: str) -> Optional[Dict[str, Any]]:
-        """
-        兼容方法（不再走 /params 主路径）。
-        返回 batch 行内 market_params（若存在）。
-        """
-        try:
-            data = self.fetch_bridge_batch(source=REQUEST_SOURCE, symbols=[symbol])
-            rows = data.get("results", [])
-            if not rows:
-                return None
-            row = rows[0]
-            if isinstance(row, dict):
-                market_params = row.get("market_params")
-                if isinstance(market_params, dict):
-                    return market_params
-                if isinstance(row.get("bridge"), dict):
-                    return row["bridge"]
-                return row
-            raise VAClientProtocolError("Batch row must be an object")
-        except VAClientError as e:
-            logger.error(f"[swing] bridge params(batch-compat) 获取失败 {symbol}: {e}")
-            return None
-
     # ------------------------------------------------------------------
     # execution_state 提取
     # ------------------------------------------------------------------
@@ -326,27 +281,8 @@ class VAClient:
         }
 
     # ------------------------------------------------------------------
-    # 高层封装 — fetch_market_context
+    # 高层封装 — fetch_market_context_batch
     # ------------------------------------------------------------------
-
-    def fetch_market_context(self, symbol: str, **params) -> Dict[str, Any]:
-        """
-        获取单 symbol 市场上下文（主流程改为 batch 路径）。
-        """
-        source = params.pop("source", REQUEST_SOURCE)
-        date = params.pop("date", None)
-        batch_resp = self.fetch_bridge_batch(source=source, date=date, symbols=[symbol], **params)
-        rows = batch_resp.get("results", [])
-        parsed = parse_swing_batch_rows(rows)
-        if not parsed:
-            return {"symbol": symbol, "error": "bridge data unavailable"}
-
-        first_symbol = next(iter(parsed))
-        bridge = parsed[first_symbol]["bridge"]
-
-        execution_state = self.extract_execution_state(bridge)
-        bridge["execution_state"] = execution_state
-        return bridge
 
     def fetch_market_context_batch(
         self,
@@ -371,24 +307,3 @@ class VAClient:
                 bridge["execution_state"] = self.extract_execution_state(bridge)
 
         return batch_resp
-
-    def get_params_batch(
-        self,
-        symbols: List[str],
-        date: Optional[str] = None,
-        **params,
-    ) -> Dict[str, Dict[str, Any]]:
-        """
-        兼容输出：将 batch list 行转换为 {SYMBOL: market_params} 映射。
-        该方法基于 /api/bridge/batch，不走旧 /params 路径。
-        """
-        batch_resp = self.fetch_bridge_batch(
-            source=REQUEST_SOURCE,
-            date=date,
-            symbols=symbols,
-            **params,
-        )
-        out: Dict[str, Dict[str, Any]] = {}
-        for symbol, payload in parse_swing_batch_rows(batch_resp.get("results", [])).items():
-            out[symbol] = payload["market_params"]
-        return out
